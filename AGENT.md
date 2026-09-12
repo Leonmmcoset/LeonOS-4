@@ -52,7 +52,7 @@ UEFI/GRUB
 | `drivers/` | 可加载 Ring-0 驱动模块及其打包输入。 |
 | `userland/libc/` | LeonOS libc、syscall 包装、UI/字体、网络/HTTP/TLS、PTY 等公共实现。 |
 | `userland/apps/` | Ring-3 系统与桌面应用；`desktop/` 是窗口服务器，其他应用为它的客户端。 |
-| `userland/{picolibc,busybox,tcc,lua,nano,file,cmd,stardustui}/` | 第三方软件的 LeonOS 端口、适配层与构建输入。 |
+| `userland/{busybox,tcc,lua,nano,file,cmd,stardustui}/` | 第三方软件的 LeonOS 端口、适配层与构建输入。 |
 | `include/leonos/` | 公共 C ABI 头文件；修改公开 ABI 时优先检查这里。 |
 | `system/` | 被 staging 的系统配置、字体、壁纸、证书、图标、应用资源和默认内容。 |
 | `configs/` | 动态组件清单、可提交 build profile 与默认配置。 |
@@ -66,7 +66,7 @@ UEFI/GRUB
 ### 特权边界
 
 - Ring-3 程序经 Linux 编号的 x86_64 syscall ABI 进入内核，入口目前为
-  `int $0x80`；参数使用 `rax/rdi/rsi/rdx/r10/r8/r9`，负返回值为
+  `syscall`；参数使用 `rax/rdi/rsi/rdx/r10/r8/r9`，负返回值为
   `-errno`。已实现接口才可视为可用，未知 syscall 返回 `-ENOSYS`。
 - 内核负责用户指针与长度验证、页表/进程资源、硬件和最终授权。中间层不应
   直接信任用户指针或直接访问硬件。
@@ -76,7 +76,9 @@ UEFI/GRUB
 - GUI 客户端与 `desktop.elf` 通过 GUI IPC/ioctl 通信，而不是共享窗口服务器
   的私有像素内存。应用提交自己的缓冲内容；不要把窗口服务器内部 buffer
   当作公共 ABI。
-- 路径使用 Unix 根目录格式，例如 `/system/apps/desktop/desktop.elf`。
+- 来宾运行路径使用 Unix 根目录格式，例如 `/usr/lib/leonos/apps/desktop/desktop.elf`；
+  仓库源码路径（`system/`、`drivers/`、`docs/`）是构建输入，不等于来宾路径。
+  现行 rootfs 契约见 `docs/ROOTFS_LAYOUT_AND_MIGRATION.md`。
   相对路径依赖任务当前目录；路径统一使用 Unix 根目录语义。
 
 ## 3. 公共 ABI、库和 SDK 的联动规则
@@ -98,9 +100,9 @@ UEFI/GRUB
 
 ### libc 与第三方移植
 
-- LeonOS libc 与 Picolibc 共同构成用户态 C 环境；不要把“成功链接”误称为
+- musl、mimalloc 与 LeonOS 扩展库构成用户态 C 环境；不要把“成功链接”误称为
   “已完整移植”。每个移植软件都需要确认其真实源码、适配层、启动代码、
-  libc/Picolibc 依赖、ELF 输出、镜像 staging 和运行路径。
+  musl/mimalloc 依赖、ELF 输出、镜像 staging 和运行路径。
 - 新增第三方软件时，除上游源码外还要处理：构建脚本、组件清单、镜像路径、
   launcher/桌面入口（若需要）、许可证和归属、SDK/API 包（若公开）、以及
   对应文档。
@@ -127,9 +129,9 @@ UI 修改必须横向检查，而不是只改一个应用。典型关联范围�
 
 ### 主题与个性化
 
-- 用户个性化数据属于 `/users/<name>/appearance.conf`；Metro 与 Win95
+- 用户个性化数据属于 `/home/<name>/appearance.conf`；Metro 与 Win95
   的基础色配置相互独立，不能相互覆盖。
-- `/system/config/display.conf` 是尚无用户会话时的启动/默认外观，用于早期
+- `/etc/leonos/display.conf` 是尚无用户会话时的启动/默认外观，用于早期
   framebuffer、bugcheck、登录、OOBE 和安装器等场景。它不能替代每用户配置。
 - 修改个性化设置后应立即经 Desktop 发布状态并让已打开应用收到主题变化；
   不要只写文件、等下次启动才生效。

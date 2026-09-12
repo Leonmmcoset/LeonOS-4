@@ -10,6 +10,7 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 #include <string.h>
+#include <leonos/layout.h>
 
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -23,7 +24,7 @@
 #define INSTALL_UPDATE_MS 100U
 #define API_INSTALL_LOG_PATH "/var/log/apiapp-install.log"
 #define TASK_STATE_EXITED 3U
-#define APIAPP_PATH "/system/apps/apiapp/apiapp.elf"
+#define APIAPP_PATH LEONOS_LAYOUT_LEONOS_APPS "/apiapp/apiapp.elf"
 
 static uint32_t wizard_pixels[WIZARD_W * WIZARD_H];
 
@@ -121,7 +122,7 @@ static void build_download_path(char *dst, uint32_t capacity)
     char directory[LEONOS_FS_PATH_LEN];
     uint32_t pos = 0;
     download_path_for_user(directory, sizeof(directory));
-    (void)mkdir(directory, 0);
+    (void)mkdir(directory, 0700);
     append_text(dst, &pos, capacity, directory);
     append_text(dst, &pos, capacity, "/app-");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
@@ -131,7 +132,7 @@ static void build_download_path(char *dst, uint32_t capacity)
 static void build_download_status_path(char *dst, uint32_t capacity)
 {
     uint32_t pos = 0;
-    (void)mkdir("/tmp", 0);
+    (void)mkdir("/tmp", 01777);
     dst[0] = 0;
     append_text(dst, &pos, capacity, "/tmp/api_download_");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
@@ -141,7 +142,7 @@ static void build_download_status_path(char *dst, uint32_t capacity)
 static void build_install_status_path(char *dst, uint32_t capacity)
 {
     uint32_t pos = 0;
-    (void)mkdir("/tmp", 0);
+    (void)mkdir("/tmp", 01777);
     dst[0] = 0;
     append_text(dst, &pos, capacity, "/tmp/api_install_");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
@@ -157,10 +158,10 @@ static void install_log(const char *message)
         return;
     }
     printf("[apiapp] %s\n", message);
-    (void)mkdir("/var", 0);
-    (void)mkdir("/var/log", 0);
+    (void)mkdir("/var", 0755);
+    (void)mkdir("/var/log", 0755);
     fd = open(API_INSTALL_LOG_PATH,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0666);
     if (fd < 0) {
         return;
     }
@@ -233,7 +234,7 @@ static int write_download_status(const char *path, char state,
     append_u32(text, &pos, sizeof(text), total);
     text[pos++] = '\n';
     text[pos] = 0;
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return -1;
     }
@@ -549,8 +550,7 @@ static int install_api_with_progress(int window_id, const char *api_path,
         install_log_result("failed to spawn install worker: ", state.worker_pid);
         return 0;
     }
-    if (leonos_auth_delegate_elevation((uint32_t)state.worker_pid) < 0 ||
-        write_download_status(state.status_path, 'A', 0, 0) < 0) {
+    if (write_download_status(state.status_path, 'A', 0, 0) < 0) {
         install_log("failed to authorize install worker");
         (void)leonos_task_kill((uint32_t)state.worker_pid);
         unlink(state.status_path);

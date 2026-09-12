@@ -1,0 +1,103 @@
+diff --git a/modules/pam_unix/passverify.c b/modules/pam_unix/passverify.c
+index 8e0deb0..ad1b48a 100644
+--- a/modules/pam_unix/passverify.c
++++ b/modules/pam_unix/passverify.c
+@@ -386,45 +386,36 @@ i64c(int i)
+ }
+ 
+ /* <where> must point to a buffer of at least <length>+1 length */
+-static void
++static int
+ crypt_make_salt(char *where, int length)
+ {
+-        struct timeval tv;
+-        MD5_CTX ctx;
+-        unsigned char tmp[16];
+         unsigned char *src = (unsigned char *)where;
+         int i;
+ #ifdef PAM_PATH_RANDOMDEV
+-	int fd;
+-	int rv;
+-
+-	if ((rv = fd = open(PAM_PATH_RANDOMDEV, O_RDONLY | O_CLOEXEC)) != -1) {
+-		while ((rv = read(fd, where, length)) != length && errno == EINTR);
+-		close (fd);
+-	}
+-	if (rv != length) {
+-#endif
+-        /*
+-         * Code lifted from Marek Michalkiewicz's shadow suite. (CG)
+-         * removed use of static variables (AGM)
+-         *
+-	 * will work correctly only for length <= 16 */
+-	src = tmp;
+-        GoodMD5Init(&ctx);
+-        gettimeofday(&tv, (struct timezone *) 0);
+-        GoodMD5Update(&ctx, (void *) &tv, sizeof tv);
+-        i = getpid();
+-        GoodMD5Update(&ctx, (void *) &i, sizeof i);
+-        i = clock();
+-        GoodMD5Update(&ctx, (void *) &i, sizeof i);
+-        GoodMD5Update(&ctx, src, length);
+-        GoodMD5Final(tmp, &ctx);
+-#ifdef PAM_PATH_RANDOMDEV
++	int fd = open(PAM_PATH_RANDOMDEV, O_RDONLY | O_CLOEXEC);
++	int done = 0;
++	if (fd < 0) return -1;
++	while (done < length) {
++		ssize_t count = read(fd, where + done, length - done);
++		if (count < 0 && errno == EINTR) continue;
++		if (count <= 0) {
++			int saved_errno = count < 0 ? errno : EIO;
++			close(fd);
++			pam_overwrite_n(where, length);
++			errno = saved_errno;
++			return -1;
++		}
++		done += count;
+ 	}
++	if (close(fd) < 0) { pam_overwrite_n(where, length); return -1; }
++#else
++	errno = ENOSYS;
++	return -1;
+ #endif
+         for (i = 0; i < length; i++)
+                 *where++ = i64c(src[i] & 077);
+         *where = '\0';
++        return 0;
+ }
+ 
+ char *
+@@ -434,7 +425,7 @@ crypt_md5_wrapper(const char *pass_new)
+         char *cp = (char *) result;
+ 
+         cp = stpcpy(cp, "$1$");      /* magic for the MD5 */
+-	crypt_make_salt(cp, 8);
++	if (crypt_make_salt(cp, 8) < 0) return NULL;
+ 
+         /* no longer need cleartext */
+         cp = Goodcrypt_md5(pass_new, (const char *) result);
+@@ -475,7 +466,7 @@ PAMH_ARG_DECL(char * create_password_hash,
+ 		char tmppass[9];
+ 		char *hashed;
+ 
+-		crypt_make_salt(salt, 2);
++		if (crypt_make_salt(salt, 2) < 0) return NULL;
+ 		if (off(UNIX_BIGCRYPT, ctrl) && strlen(password) > 8) {
+ 			strncpy(tmppass, password, sizeof(tmppass)-1);
+ 			tmppass[sizeof(tmppass)-1] = '\0';
+@@ -493,12 +484,13 @@ PAMH_ARG_DECL(char * create_password_hash,
+ 	 * guaranteed to have crypt_gensalt_rn().
+ 	 */
+ 	sp = crypt_gensalt_rn(algoid, rounds, NULL, 0, salt, sizeof(salt));
++	if (sp == NULL) { pam_overwrite_array(salt); return NULL; }
+ #else
+ 	sp = stpcpy(salt, algoid);
+ 	if (on(UNIX_ALGO_ROUNDS, ctrl)) {
+ 		sp += snprintf(sp, sizeof(salt) - (16 + 1 + (sp - salt)), "rounds=%u$", rounds);
+ 	}
+-	crypt_make_salt(sp, 16);
++	if (crypt_make_salt(sp, 16) < 0) return NULL;
+ #endif /* CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY */
+ #ifdef HAVE_CRYPT_R
+ 	sp = NULL;

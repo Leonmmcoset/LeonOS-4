@@ -1,73 +1,57 @@
-/*
-Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
-SPDX-License-Identifier: BSD-3-Clause-Clear
+#ifndef	_SYS_STATVFS_H
+#define	_SYS_STATVFS_H
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted (subject to the limitations in the
-disclaimer below) provided that the following conditions are met:
-
-  * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-
-  * Redistributions in binary form must reproduce the above
-    copyright notice, this list of conditions and the following
-    disclaimer in the documentation and/or other materials provided
-    with the distribution.
-
-  * Neither the name of Qualcomm Technologies, Inc. nor the names of its
-    contributors may be used to endorse or promote products derived
-    from this software without specific prior written permission.
-
-NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE
-GRANTED BY THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT
-HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
-WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
-GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
-IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
-
-#ifndef _SYS_STATVFS_H
-#define _SYS_STATVFS_H
-
-#include <sys/cdefs.h>
-#include <sys/_types.h>
-
-_BEGIN_STD_C
-
-#ifndef _FSBLKCNT_T_DECLARED /* for statvfs() */
-typedef __fsblkcnt_t fsblkcnt_t;
-typedef __fsfilcnt_t fsfilcnt_t;
-#define _FSBLKCNT_T_DECLARED
+#ifdef __cplusplus
+extern "C" {
 #endif
 
+#include <features.h>
+
+#define __NEED_fsblkcnt_t
+#define __NEED_fsfilcnt_t
+#include <bits/alltypes.h>
+
 struct statvfs {
-    unsigned long f_bsize;   /* file system block size */
-    unsigned long f_frsize;  /* fundamental file system block size */
-    fsblkcnt_t    f_blocks;  /* total number of blocks in file system */
-    fsblkcnt_t    f_bfree;   /* total number of free blocks */
-    fsblkcnt_t    f_bavail;  /* number of free blocks available to non-privileged process */
-    fsfilcnt_t    f_files;   /* total number of file serial numbers */
-    fsfilcnt_t    f_ffree;   /* total number of free file serial numbers */
-    fsfilcnt_t    f_favail;  /* number of file serial numbers available to non-privileged process */
-    unsigned long f_fsid;    /* file system ID */
-    unsigned long f_flag;    /* bit mask of f_flag values */
-    unsigned long f_namemax; /* maximum filename length */
+	unsigned long f_bsize, f_frsize;
+	fsblkcnt_t f_blocks, f_bfree, f_bavail;
+	fsfilcnt_t f_files, f_ffree, f_favail;
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+	unsigned long f_fsid;
+	unsigned :8*(2*sizeof(int)-sizeof(long));
+#else
+	unsigned :8*(2*sizeof(int)-sizeof(long));
+	unsigned long f_fsid;
+#endif
+	unsigned long f_flag, f_namemax;
+	unsigned int f_type;
+	int __reserved[5];
 };
 
-/* f_flag bit values */
-#define ST_RDONLY 0x0001 /* read-only file system */
-#define ST_NOSUID 0x0002 /* does not support setuid/setgid semantics */
+int statvfs (const char *__restrict, struct statvfs *__restrict);
+int fstatvfs (int, struct statvfs *);
 
-int statvfs(const char * __restrict __path, struct statvfs * __restrict __buf);
-int fstatvfs(int __fd, struct statvfs *__buf);
+#define ST_RDONLY 1
+#define ST_NOSUID 2
+#define ST_NODEV  4
+#define ST_NOEXEC 8
+#define ST_SYNCHRONOUS 16
+#define ST_MANDLOCK    64
+#define ST_WRITE       128
+#define ST_APPEND      256
+#define ST_IMMUTABLE   512
+#define ST_NOATIME     1024
+#define ST_NODIRATIME  2048
+#define ST_RELATIME    4096
 
-_END_STD_C
+#if defined(_LARGEFILE64_SOURCE)
+#define statvfs64 statvfs
+#define fstatvfs64 fstatvfs
+#define fsblkcnt64_t fsblkcnt_t
+#define fsfilcnt64_t fsfilcnt_t
+#endif
 
-#endif /* _SYS_STATVFS_H */
+#ifdef __cplusplus
+}
+#endif
+
+#endif

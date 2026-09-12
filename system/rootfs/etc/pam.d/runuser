@@ -1,0 +1,4 @@
+auth sufficient pam_rootok.so
+auth required pam_deny.so
+account include common-account
+session include common-session

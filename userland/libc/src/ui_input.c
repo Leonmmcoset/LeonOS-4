@@ -18,11 +18,14 @@ static int ui_keycode_is_letter(uint8_t keycode)
            (keycode >= 44 && keycode <= 50);
 }
 
-void leonos_ui_caps_lock_event(uint8_t keycode, uint8_t pressed)
+void leonos_ui_set_keyboard_modifiers(uint8_t modifiers)
 {
-    if (keycode == LEONOS_KEY_CAPS_LOCK && pressed) {
-        ui_caps_lock ^= 1;
-    }
+    ui_caps_lock = (modifiers & LEONOS_INPUT_MOD_CAPS_LOCK) != 0;
+}
+
+uint8_t leonos_ui_keyboard_modifiers(void)
+{
+    return ui_caps_lock ? LEONOS_INPUT_MOD_CAPS_LOCK : 0;
 }
 
 int leonos_ui_keycode_to_char(uint8_t keycode, char *out)

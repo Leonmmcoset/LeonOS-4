@@ -1,75 +1,79 @@
-/* Copyright (c) 2002 Jeff Johnston  <jjohnstn@redhat.com> */
-#ifndef _WCTYPE_H_
-#define _WCTYPE_H_
+#ifndef _WCTYPE_H
+#define _WCTYPE_H
 
-#include <sys/cdefs.h>
-#include <sys/_types.h>
-
-#define __need_wint_t
-#include <stddef.h>
-
-#if __POSIX_VISIBLE >= 200809
-#include <sys/_locale.h>
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#ifndef WEOF
-#define WEOF ((wint_t) - 1)
+#include <features.h>
+
+#define __NEED_wint_t
+#define __NEED_wctype_t
+
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define __NEED_locale_t
 #endif
 
-_BEGIN_STD_C
+#include <bits/alltypes.h>
 
-#ifndef _WCTYPE_DECLARED
-typedef __wctype_t wctype_t;
-#define _WCTYPE_DECLARED
+typedef const int * wctrans_t;
+
+#undef WEOF
+#define WEOF 0xffffffffU
+
+#undef iswdigit
+
+int       iswalnum(wint_t);
+int       iswalpha(wint_t);
+int       iswblank(wint_t);
+int       iswcntrl(wint_t);
+int       iswdigit(wint_t);
+int       iswgraph(wint_t);
+int       iswlower(wint_t);
+int       iswprint(wint_t);
+int       iswpunct(wint_t);
+int       iswspace(wint_t);
+int       iswupper(wint_t);
+int       iswxdigit(wint_t);
+int       iswctype(wint_t, wctype_t);
+wint_t    towctrans(wint_t, wctrans_t);
+wint_t    towlower(wint_t);
+wint_t    towupper(wint_t);
+wctrans_t wctrans(const char *);
+wctype_t  wctype(const char *);
+
+#ifndef __cplusplus
+#undef iswdigit
+#define iswdigit(a) (0 ? iswdigit(a) : ((unsigned)(a)-'0') < 10)
 #endif
 
-#ifndef _WCTRANS_DECLARED
-typedef int wctrans_t;
-#define _WCTRANS_DECLARED
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+
+int iswalnum_l(wint_t, locale_t);
+int iswalpha_l(wint_t, locale_t);
+int iswblank_l(wint_t, locale_t);
+int iswcntrl_l(wint_t, locale_t);
+int iswdigit_l(wint_t, locale_t);
+int iswgraph_l(wint_t, locale_t);
+int iswlower_l(wint_t, locale_t);
+int iswprint_l(wint_t, locale_t);
+int iswpunct_l(wint_t, locale_t);
+int iswspace_l(wint_t, locale_t);
+int iswupper_l(wint_t, locale_t);
+int iswxdigit_l(wint_t, locale_t);
+int iswctype_l(wint_t, wctype_t, locale_t);
+wint_t towlower_l(wint_t, locale_t);
+wint_t towupper_l(wint_t, locale_t);
+wint_t towctrans_l(wint_t, wctrans_t, locale_t);
+wctrans_t wctrans_l(const char *, locale_t);
+wctype_t  wctype_l(const char *, locale_t);
+
 #endif
 
-int iswalnum(wint_t) __picolibc_export;
-int iswalpha(wint_t) __picolibc_export;
-#if __ISO_C_VISIBLE >= 1999
-int iswblank(wint_t) __picolibc_export;
-#endif
-int       iswcntrl(wint_t) __picolibc_export;
-int       iswctype(wint_t, wctype_t) __picolibc_export;
-int       iswdigit(wint_t) __picolibc_export;
-int       iswgraph(wint_t) __picolibc_export;
-int       iswlower(wint_t) __picolibc_export;
-int       iswprint(wint_t) __picolibc_export;
-int       iswpunct(wint_t) __picolibc_export;
-int       iswspace(wint_t) __picolibc_export;
-int       iswupper(wint_t) __picolibc_export;
-int       iswxdigit(wint_t) __picolibc_export;
-wint_t    towctrans(wint_t, wctrans_t) __picolibc_export;
-wint_t    towupper(wint_t) __picolibc_export;
-wint_t    towlower(wint_t) __picolibc_export;
-wctrans_t wctrans(const char *) __picolibc_export;
-wctype_t  wctype(const char *) __picolibc_export;
-
-#if __POSIX_VISIBLE >= 200809
-int       iswalnum_l(wint_t, locale_t) __picolibc_export;
-int       iswalpha_l(wint_t, locale_t) __picolibc_export;
-int       iswblank_l(wint_t, locale_t) __picolibc_export;
-int       iswcntrl_l(wint_t, locale_t) __picolibc_export;
-int       iswctype_l(wint_t, wctype_t, locale_t) __picolibc_export;
-int       iswdigit_l(wint_t, locale_t) __picolibc_export;
-int       iswgraph_l(wint_t, locale_t) __picolibc_export;
-int       iswlower_l(wint_t, locale_t) __picolibc_export;
-int       iswprint_l(wint_t, locale_t) __picolibc_export;
-int       iswpunct_l(wint_t, locale_t) __picolibc_export;
-int       iswspace_l(wint_t, locale_t) __picolibc_export;
-int       iswupper_l(wint_t, locale_t) __picolibc_export;
-int       iswxdigit_l(wint_t, locale_t) __picolibc_export;
-wint_t    towctrans_l(wint_t, wctrans_t, locale_t) __picolibc_export;
-wint_t    towupper_l(wint_t, locale_t) __picolibc_export;
-wint_t    towlower_l(wint_t, locale_t) __picolibc_export;
-wctrans_t wctrans_l(const char *, locale_t) __picolibc_export;
-wctype_t  wctype_l(const char *, locale_t) __picolibc_export;
+#ifdef __cplusplus
+}
 #endif
 
-_END_STD_C
-
-#endif /* _WCTYPE_H_ */
+#endif

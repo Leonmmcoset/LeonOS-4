@@ -10,14 +10,15 @@
 #include <leonos/tar.h>
 #include <string.h>
 
+#include <leonos/layout.h>
+
 #define API_TEMP_PREFIX "/tmp/api_install_"
 #define API_INI_PATH "install.ini"
 #define API_PACKAGE_FORMAT "leonos-api"
 #define API_PACKAGE_VERSION "1"
-#define API_PROGRAM_DIR "/programs"
-#define API_PROGRAM_ROOT "/programs/"
-#define API_SYSTEM_DIR "/system"
-#define API_SYSTEM_ROOT "/system/"
+#define API_PROGRAM_DIR LEONOS_LAYOUT_LEONOS_APPS
+#define API_PROGRAM_ROOT LEONOS_LAYOUT_LEONOS_APPS "/"
+#define API_OPT_ROOT "/opt/"
 
 static uint32_t api_temp_sequence;
 
@@ -202,7 +203,7 @@ static int api_ensure_dir(const char *path)
         !api_ensure_dir(parent)) {
         return 0;
     }
-    if (mkdir(clean, 0) == 0) {
+    if (mkdir(clean, 0777) == 0) {
         return 1;
     }
     return leonos_stat_legacy(clean, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
@@ -260,18 +261,41 @@ static int api_relative_path_is_safe(const char *path)
            api_component_path_is_safe(path, 0);
 }
 
+static int api_path_is_under(const char *path, const char *root)
+{
+    size_t length;
+    if (!path || !root || !root[0]) {
+        return 0;
+    }
+    length = strlen(root);
+    if (strncmp(path, root, length) != 0) {
+        return 0;
+    }
+    if (path[length] == 0) {
+        return 1;
+    }
+    return root[length - 1U] == '/' || path[length] == '/';
+}
+
 static int api_default_path_is_allowed(const char *path)
 {
     return api_path_is_clean_absolute(path) &&
-           api_text_starts_with(path, API_PROGRAM_ROOT);
+           (api_text_starts_with(path, API_PROGRAM_ROOT) ||
+            api_text_starts_with(path, API_OPT_ROOT));
 }
 
 static int api_install_path_requires_admin(const char *path)
 {
-    return api_text_eq(path, API_PROGRAM_DIR) ||
-           api_text_starts_with(path, API_PROGRAM_ROOT) ||
-           api_text_eq(path, API_SYSTEM_DIR) ||
-           api_text_starts_with(path, API_SYSTEM_ROOT);
+    static const char *const roots[] = {
+        API_PROGRAM_DIR, "/usr", "/etc", "/var", "/opt", "/root", "/boot",
+    };
+    if (!path) return 0;
+    for (uint32_t i = 0; i < sizeof(roots) / sizeof(roots[0]); ++i) {
+        if (api_path_is_under(path, roots[i])) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int api_bool_value(const char *key, uint32_t *out)
@@ -346,7 +370,7 @@ static int api_write_app_manifest(const struct leonos_api_info *info,
     api_append_text(manifest, &pos, sizeof(manifest), "\nextensions=");
     api_append_text(manifest, &pos, sizeof(manifest), info->extensions);
     api_append_text(manifest, &pos, sizeof(manifest), "\n");
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return 0;
     }
@@ -770,7 +794,7 @@ append_provider:
     if (pos == 0 || pos + 1U >= sizeof(line)) {
         return 0;
     }
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0666);
     if (fd < 0) {
         return 0;
     }

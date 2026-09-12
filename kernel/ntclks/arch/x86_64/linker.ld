@@ -29,6 +29,8 @@ SECTIONS
         *(.bss .bss.*)
     }
 
+    ASSERT(. <= 144M, "Kernel overlaps the middlelayer load address")
+
     /DISCARD/ : {
         *(.eh_frame)
         *(.note .note.*)

@@ -1,63 +1,35 @@
-/*
-Copyright (c) 1982, 1986, 1993
-The Regents of the University of California.  All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-1. Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-3. Neither the name of the University nor the names of its contributors
-may be used to endorse or promote products derived from this software
-without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGE.
- */
-/* This is a dummy <sys/param.h> file, not customized for any
-   particular system.  If there is a param.h in libc/sys/SYSDIR/sys,
-   it will override this one.  */
-
 #ifndef _SYS_PARAM_H
 #define _SYS_PARAM_H
 
-#include <sys/cdefs.h>
-#include <sys/syslimits.h>
-#include <machine/endian.h>
-#include <machine/param.h>
+#define MAXSYMLINKS 20
+#define MAXHOSTNAMELEN 64
+#define MAXNAMLEN 255
+#define MAXPATHLEN 4096
+#define NBBY 8
+#define NGROUPS 32
+#define CANBSIZ 255
+#define NOFILE 256
+#define NCARGS 131072
+#define DEV_BSIZE 512
+#define NOGROUP (-1)
 
-#ifndef NBBY
-#define NBBY 8 /* number of bits in a byte */
-#endif
-#ifndef HZ
-#define HZ (60)
-#endif
-#ifndef NOFILE
-#define NOFILE (60)
-#endif
-#ifndef PATHSIZE
-#define PATHSIZE (1024)
-#endif
+#undef MIN
+#undef MAX
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#define MAX(a,b) (((a)>(b))?(a):(b))
 
-#define MAXPATHLEN PATH_MAX
+#define __bitop(x,i,o) ((x)[(i)/8] o (1<<(i)%8))
+#define setbit(x,i) __bitop(x,i,|=)
+#define clrbit(x,i) __bitop(x,i,&=~)
+#define isset(x,i) __bitop(x,i,&)
+#define isclr(x,i) !isset(x,i)
 
-#define MAX(a, b)  ((a) > (b) ? (a) : (b))
-#define MIN(a, b)  ((a) < (b) ? (a) : (b))
+#define howmany(n,d) (((n)+((d)-1))/(d))
+#define roundup(n,d) (howmany(n,d)*(d))
+#define powerof2(n) !(((n)-1) & (n))
 
-#ifndef howmany
-#define howmany(x, y) (((x) + ((y) - 1)) / (y))
-#endif
+#include <sys/resource.h>
+#include <endian.h>
+#include <limits.h>
 
 #endif

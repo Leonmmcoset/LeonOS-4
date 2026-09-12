@@ -14,9 +14,13 @@
 #include <unistd.h>
 
 #define SESSION_FRAME_CAP 4096u
-#define SESSION_RETRY_MS 5000u
+/* Short per-call retry plus backoff so a missing sessiond (installer
+ * images) never turns a query into a multi-second stall. */
+#define SESSION_CONNECT_ATTEMPT_MS 50u
+#define SESSION_CONNECT_BACKOFF_MS 1000u
 
 static int session_fd = -1;
+static uint32_t session_retry_after_ms;
 
 static uint32_t session_now_ms(void)
 {
@@ -60,13 +64,18 @@ static int session_open(void)
 {
     struct leonos_sessiond_hello hello;
     struct leonos_sessiond_ack ack;
-    uint32_t deadline = session_now_ms() + SESSION_RETRY_MS;
+    uint32_t deadline;
     if (session_fd >= 0) return session_fd;
+    if (session_now_ms() < session_retry_after_ms) return -1;
+    deadline = session_now_ms() + SESSION_CONNECT_ATTEMPT_MS;
     while (session_fd < 0 && session_now_ms() < deadline) {
         session_fd = leonos_ipc_connect(LEONOS_IPC_SOCK_SESSION);
         if (session_fd < 0) (void)poll(0, 0, 10);
     }
-    if (session_fd < 0) return -1;
+    if (session_fd < 0) {
+        session_retry_after_ms = session_now_ms() + SESSION_CONNECT_BACKOFF_MS;
+        return -1;
+    }
     (void)leonos_ipc_set_nonblock(session_fd, 1);
     hello.pid = (uint32_t)getpid();
     hello.uid = (uint32_t)getuid();
@@ -75,6 +84,7 @@ static int session_open(void)
         session_wait(LEONOS_SESSIOND_MSG_ACK, &ack, sizeof(ack), 0) < 0) {
         leonos_ipc_close(session_fd);
         session_fd = -1;
+        session_retry_after_ms = session_now_ms() + SESSION_CONNECT_BACKOFF_MS;
         return -1;
     }
     return session_fd;
@@ -85,7 +95,9 @@ static int session_ack_request(uint32_t type, const void *payload, uint32_t leng
 {
     if (session_open() < 0) return -1;
     if (leonos_ipc_send(session_fd, type, payload, length) < 0) return -1;
-    return session_wait(LEONOS_SESSIOND_MSG_ACK, ack, sizeof(*ack), 0);
+    if (session_wait(LEONOS_SESSIOND_MSG_ACK, ack, sizeof(*ack), 0) < 0) return -1;
+    if (ack->code < 0) { errno = EACCES; return -1; }
+    return 0;
 }
 
 int leonos_startup_request(const struct leonos_startup_command *command,
@@ -147,6 +159,9 @@ int leonos_startup_list(uint32_t uid, struct leonos_startup_entry *entries,
     if (session_wait(LEONOS_SESSIOND_MSG_LIST, buffer, sizeof(buffer), &length) < 0) return -1;
     if (length < sizeof(ack)) return -1;
     memcpy(&ack, buffer, sizeof(ack));
+    if (ack.count > capacity || (uint64_t)ack.count * sizeof(*entries) > length - sizeof(ack)) {
+        errno = EPROTO; return -1;
+    }
     if (out_count) *out_count = ack.count;
     if (entries && capacity) {
         uint32_t count = ack.count < capacity ? ack.count : capacity;

@@ -4,14 +4,17 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
+#include <errno.h>
+#include <unistd.h>
 
 #include "devmand.h"
 #include "netmand.h"
 #include "sessiond.h"
+#include <leonos/layout.h>
 
-#define SERVICE_CONFIG_PATH "/system/config/services.cfg"
-#define SERVICE_STATE_PATH "/var/run/services.state"
-#define SERVICE_COMMAND_PATH "/var/run/services.cmd"
+#define SERVICE_CONFIG_PATH LEONOS_PATH_SERVICES_CFG
+#define SERVICE_STATE_PATH LEONOS_PATH_SERVICES_STATE
+#define SERVICE_COMMAND_PATH LEONOS_PATH_SERVICES_CMD
 #define SERVICE_LOG_PATH "/var/log/services.log"
 #define SERVICE_CONFIG_MAX 512U
 #define SERVICE_COMMAND_MAX 512U
@@ -171,7 +174,7 @@ static int write_file_text(const char *path, const char *buffer, uint32_t len,
     int fd;
     long wrote;
     flags |= append ? LEONOS_O_APPEND : LEONOS_O_TRUNC;
-    fd = open(path, flags, 0);
+    fd = open(path, flags, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -523,15 +526,20 @@ static void write_state(void)
 
 static void ensure_runtime_dirs(void)
 {
-    (void)mkdir("/var", 0);
-    (void)mkdir("/var/run", 0);
-    (void)mkdir("/var/log", 0);
+    (void)mkdir("/var", 0755);
+    (void)mkdir("/run", 0755);
+    (void)mkdir(LEONOS_LAYOUT_RUN_LEONOS, 0755);
+    (void)mkdir("/var/log", 0755);
 }
 
 int main(void)
 {
     puts("[serviced.elf] service runtime starting");
     ensure_runtime_dirs();
+    if (unlink(SERVICE_COMMAND_PATH) < 0 && errno != ENOENT) {
+        printf("[serviced.elf] reset pending commands failed errno=%d\n", errno);
+        return 1;
+    }
     log_line("service runtime starting");
     load_config();
     update_services();

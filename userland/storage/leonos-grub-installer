@@ -1,0 +1,27 @@
+#!/bin/sh
+# LeonOS product helper: copy an already-built EFI payload, not grub-install.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+source=/install/esp
+if [ "${1-}" = --source ]; then
+    [ "$#" -ge 3 ] || { printf '%s\n' 'Usage: leonos-grub-installer [--source DIR] ESP-MOUNTPOINT' >&2; exit 2; }
+    source=$2
+    shift 2
+fi
+[ "$#" -eq 1 ] && [ -d "$1" ] || {
+    printf '%s\n' 'Usage: leonos-grub-installer [--source DIR] ESP-MOUNTPOINT' >&2
+    exit 2
+}
+esp=$1
+# Validate the complete input before writing any destination files.
+for file in EFI/BOOT/BOOTX64.EFI loader.elf leonos/kernel.sys leonos/middlelayer.sys; do
+    [ -f "$source/$file" ] || { printf 'Missing boot payload: %s\n' "$source/$file" >&2; exit 1; }
+done
+[ -d "$source/grub" ] || { printf 'Missing GRUB payload: %s\n' "$source/grub" >&2; exit 1; }
+mkdir -p -- "$esp/EFI/BOOT" "$esp/leonos" "$esp/grub"
+for file in EFI/BOOT/BOOTX64.EFI loader.elf leonos/kernel.sys leonos/middlelayer.sys; do
+    cp -- "$source/$file" "$esp/$file"
+done
+cp -R -- "$source/grub/." "$esp/grub/"
+printf 'LeonOS prebuilt boot payload installed to %s.\n' "$esp"

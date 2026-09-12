@@ -29,9 +29,12 @@ DEFAULT_EXCLUDED_CREDITS = ("llama2.c", "TinyLlama", "karpathy")
 SUBMODULE_LICENSES: dict[str, tuple[str, ...]] = {
     "litehtml": ("LICENSE",),
     "mbedtls": ("LICENSE",),
-    "picolibc": ("COPYING.picolibc", "COPYING", "LICENSE"),
+    "musl": ("COPYRIGHT",),
+    "mimalloc": ("LICENSE",),
     "busybox": ("LICENSE",),
     "nano": ("COPYING", "LICENSE"),
+    "vim": ("LICENSE",),
+    "ncurses": ("COPYING",),
     "pl_editor": ("LICENSE", "COPYING"),
     "tinycc": ("COPYING", "LICENSE"),
     "zlib": ("LICENSE",),
@@ -42,7 +45,6 @@ SUBMODULE_LICENSES: dict[str, tuple[str, ...]] = {
     "file": ("COPYING", "LICENSE"),
     "stardustui": ("LICENSE",),
     "cmd": ("LICENSE", "COPYING"),
-    "fastfetch": ("LICENSE",),
     "sl": ("LICENSE",),
     "sqlite": ("LICENSE.md", "LICENSE", "COPYING"),
     "portablegl": ("LICENSE",),
@@ -56,6 +58,7 @@ IMAGE_LICENSES: dict[str, tuple[str, ...]] = {
     "lua": ("LICENSE",),
     "cmd": ("LICENSE",),
     "nano": ("COPYING",),
+    "vim": ("LICENSE",),
     "fastfetch": ("LICENSE",),
     "sl": ("LICENSE",),
     "pleditor": ("LICENSE",),
@@ -63,7 +66,9 @@ IMAGE_LICENSES: dict[str, tuple[str, ...]] = {
 }
 
 SDK_LICENSES: dict[str, tuple[str, ...]] = {
-    "libc.a": ("THIRD_PARTY/PICOLIBC-COPYING",),
+    "libncursesw.a": ("THIRD_PARTY/NCURSES-COPYING",),
+    "libtinfow.a": ("THIRD_PARTY/NCURSES-COPYING",),
+    "libc.a": ("THIRD_PARTY/MUSL-COPYING",),
     "libz.a": ("THIRD_PARTY/ZLIB-LICENSE",),
     "libpng.a": ("THIRD_PARTY/LIBPNG-LICENSE",),
     "libmagic.a": ("THIRD_PARTY/LIBMAGIC-COPYING",),
@@ -239,20 +244,37 @@ def check_image(source: Path, category: str = "image-license") -> list[Finding]:
                             str(source), "raw image format is opaque; mount or export it before checking")]
         findings: list[Finding] = []
         for program, licenses in IMAGE_LICENSES.items():
-            executable = f"programs/{program}/{program}.elf"
-            # tcc and fastfetch use their conventional executable names; a
-            # program directory is also enough for custom packaging layouts.
-            present = artifact.exists(executable) or artifact.has_prefix(f"programs/{program}")
+            # Accept the pre-FHS and Alpine-shaped locations for compatibility
+            # review of older media, but require the license in the current
+            # named license directory.
+            exec_candidates = (
+                f"programs/{program}/{program}.elf",
+                f"usr/lib/leonos/apps/{program}/{program}.elf",
+                f"usr/bin/{program}",
+                f"bin/{program}",
+                f"opt/{program}/{program}.elf",
+                f"opt/{program}/{program}",
+            )
+            present = any(artifact.exists(candidate) for candidate in exec_candidates) or \
+                artifact.has_prefix(f"programs/{program}") or \
+                artifact.has_prefix(f"usr/lib/leonos/apps/{program}") or \
+                artifact.has_prefix(f"opt/{program}")
             if not present:
                 # Do not flag disabled components.
                 continue
-            expected = " or ".join(f"programs/{program}/{x}" for x in licenses)
-            candidates = tuple(f"programs/{program}/{x}" for x in licenses)
+            expected = " or ".join(f"usr/share/licenses/{program}/{x}" for x in licenses)
+            candidates = tuple(f"usr/share/licenses/{program}/{x}" for x in licenses)
             found = artifact.find(candidates)
             findings.append(result(category, "pass" if found else "fail", "info" if found else "error",
                                    program, expected, found or "missing", str(source),
                                    "packaged program license is present" if found else
                                    "program is present but its license file is missing"))
+        if artifact.has_prefix("usr/share/terminfo"):
+            notice = "usr/share/licenses/ncurses/COPYING"
+            found = artifact.find((notice,))
+            findings.append(result(category, "pass" if found else "fail",
+                                   "info" if found else "error", "ncurses", notice,
+                                   found or "missing", str(source), "ncurses runtime license"))
         api_notices = {"oschinpt": ("LICENSE", "ATTRIBUTION.txt")}
         for api, notices in api_notices.items():
             api_file = f"api/{api}.api"
@@ -268,9 +290,9 @@ def check_image(source: Path, category: str = "image-license") -> list[Finding]:
                                        "API package is present but its attribution file is missing"))
         # Notices for content which is not an application directory.
         if artifact.has_any(("programs/doom/doom.elf", "programs/doom/doomgeneric.elf", "api/doom.api")):
-            found = artifact.find(("system/docs/FREEDOOM-COPYING.txt",))
+            found = artifact.find(("usr/share/doc/leonos/FREEDOOM-COPYING.txt",))
             findings.append(result(category, "pass" if found else "fail", "info" if found else "error",
-                                   "freedoom", "system/docs/FREEDOOM-COPYING.txt", found or "missing",
+                                   "freedoom", "usr/share/doc/leonos/FREEDOOM-COPYING.txt", found or "missing",
                                    str(source), "Freedoom notice is present" if found else "Freedoom content lacks its notice"))
         if not findings:
             findings.append(result(category, "warn", "warning", "image", "packaged third-party programs",
@@ -371,7 +393,7 @@ def self_test() -> int:
         (root / "userland/apps/installer").mkdir(parents=True)
         (root / "userland/apps/installer/main.c").write_text('static const char acknowledgements_en[] = "ok";\nstatic int text_eq(void);', encoding="utf-8")
         assert check_submodules(root)[0].status == "pass"
-        esp_program = root / "build/esp/programs/nano"
+        esp_program = root / "build/esp/usr/bin/nano"
         esp_program.mkdir(parents=True)
         (esp_program / "nano.elf").write_bytes(b"elf")
         assert any(f.component == "nano" and f.status == "fail" for f in check_image(root / "build/esp"))

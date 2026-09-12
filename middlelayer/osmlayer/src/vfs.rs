@@ -98,17 +98,24 @@ impl LeonosMountPolicy {
 }
 
 static mut POLICY: LeonosMountPolicy = LeonosMountPolicy::empty();
-/// Builds the mount table: installer mode uses ramdisk/ESP/devfs, otherwise exFAT root + FAT32 boot + devfs.
+/**
+ * @brief Build the mount policy for a disk system, installer or live desktop.
+ * @param boot Boot modules and command line; absent selects disk boot.
+ */
 pub fn init_root(boot: Option<&BootInfo>) {
     let mut policy = LeonosMountPolicy::empty();
     let installer = boot
         .map(|b| unsafe { cstr_contains(b.cmdline, b"mode=installer") })
         .unwrap_or(false);
+    let live = boot
+        .map(|b| unsafe { cstr_contains(b.cmdline, b"mode=live") })
+        .unwrap_or(false);
 
-    if installer {
+    if installer || live {
         let mut ramdisk = LeonosMountEntry::empty();
         ramdisk.kind = MOUNT_KIND_FAT32_RAMDISK;
-        ramdisk.flags = MOUNT_FLAG_RUNTIME_ROOT | MOUNT_FLAG_READONLY;
+        ramdisk.flags = MOUNT_FLAG_RUNTIME_ROOT |
+            if installer { MOUNT_FLAG_READONLY } else { 0 };
         copy_bytes(&mut ramdisk.path, b"/");
         copy_bytes(&mut ramdisk.source, b"leonos-installer-root");
         if let Some((start, len)) = find_module(boot, b"leonos-installer-root") {
@@ -124,19 +131,21 @@ pub fn init_root(boot: Option<&BootInfo>) {
         copy_bytes(&mut devfs.source, b"devfs");
         add_entry(&mut policy, devfs);
 
-        let mut target = LeonosMountEntry::empty();
-        target.kind = MOUNT_KIND_TARGET_ROOT;
-        target.flags = MOUNT_FLAG_OPTIONAL;
-        copy_bytes(&mut target.path, b"/target");
-        copy_bytes(&mut target.source, b"installer-target-root");
-        add_entry(&mut policy, target);
+        if installer {
+            let mut target = LeonosMountEntry::empty();
+            target.kind = MOUNT_KIND_TARGET_ROOT;
+            target.flags = MOUNT_FLAG_OPTIONAL;
+            copy_bytes(&mut target.path, b"/target");
+            copy_bytes(&mut target.source, b"installer-target-root");
+            add_entry(&mut policy, target);
 
-        let mut target_esp = LeonosMountEntry::empty();
-        target_esp.kind = MOUNT_KIND_TARGET_ESP;
-        target_esp.flags = MOUNT_FLAG_OPTIONAL;
-        copy_bytes(&mut target_esp.path, b"/target/boot");
-        copy_bytes(&mut target_esp.source, b"installer-target-esp");
-        add_entry(&mut policy, target_esp);
+            let mut target_esp = LeonosMountEntry::empty();
+            target_esp.kind = MOUNT_KIND_TARGET_ESP;
+            target_esp.flags = MOUNT_FLAG_OPTIONAL;
+            copy_bytes(&mut target_esp.path, b"/target/boot");
+            copy_bytes(&mut target_esp.source, b"installer-target-esp");
+            add_entry(&mut policy, target_esp);
+        }
     } else {
         let mut root = LeonosMountEntry::empty();
         root.kind = MOUNT_KIND_EXFAT_BOOT;

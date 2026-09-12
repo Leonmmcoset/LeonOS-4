@@ -1,0 +1,26 @@
+{
+  "e2fsprogs": {
+    "version": "1.47.3",
+    "url": "https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.3/e2fsprogs-1.47.3.tar.xz",
+    "sha256": "857e6ef800feaa2bb4578fbc810214be5d3c88b072ea53c5384733a965737329",
+    "directory": "e2fsprogs-1.47.3",
+    "license_file": "NOTICE",
+    "checksum_source": "https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.3/sha256sums.asc"
+  },
+  "dosfstools": {
+    "version": "4.2",
+    "url": "https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz",
+    "sha256": "64926eebf90092dca21b14259a5301b7b98e7b1943e8a201c7d726084809b527",
+    "directory": "dosfstools-4.2",
+    "license_file": "COPYING",
+    "checksum_source": "https://raw.githubusercontent.com/buildroot/buildroot/2025.02/package/dosfstools/dosfstools.hash"
+  },
+  "exfatprogs": {
+    "version": "1.4.3",
+    "url": "https://github.com/exfatprogs/exfatprogs/releases/download/1.4.3/exfatprogs-1.4.3.tar.xz",
+    "sha256": "57226a8ec1bfbce06d68a42cde8cd980414a9457882e691fbce4a4f86c8d5f08",
+    "directory": "exfatprogs-1.4.3",
+    "license_file": "COPYING",
+    "checksum_source": "https://api.github.com/repos/exfatprogs/exfatprogs/releases/tags/1.4.3"
+  }
+}

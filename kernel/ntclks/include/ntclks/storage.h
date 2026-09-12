@@ -9,6 +9,9 @@
 #include <leonos/fs.h>
 #include <leonos/system.h>
 #include <ntclks/types.h>
+#include <leonos/permissions.h>
+#include <linux/stat.h>
+#include <linux/statfs.h>
 
 /* Legacy installation records are internal-only while boot storage is being
  * simplified.  They are deliberately absent from the public SDK; userland
@@ -63,6 +66,43 @@ struct storage_node {
     uint64_t size;
 };
 
+struct storage_inode_ref;
+int storage_inode_get(const struct storage_node *node, struct storage_inode_ref **out);
+void storage_inode_retain(struct storage_inode_ref *reference);
+int storage_inode_put(struct storage_inode_ref *reference);
+int storage_inode_refresh(struct storage_node *node);
+int storage_node_mount_flags(const struct storage_node *node, uint64_t *flags);
+int storage_remount_path(const char *path, uint64_t flags);
+int storage_sync_volume(uint32_t volume_id);
+int storage_sync_all(void);
+int storage_write_held_node(struct storage_node *node, uint64_t offset,
+                            const void *buffer, uint32_t length, uint32_t *written);
+int storage_truncate_held_node(struct storage_node *node, uint64_t length);
+
+int storage_inode_permissions(const struct storage_node *node,
+                              struct leonos_permissions *value, bool write);
+int storage_inode_stat(const struct storage_node *node, struct linux_stat_abi *value);
+int storage_inode_utimensat(const struct storage_node *node, int64_t atime, int64_t mtime,
+                            bool set_atime, bool set_mtime);
+int storage_create_socket(const char *path, struct storage_node *out);
+/**
+ * @brief Creates a symbolic link on the filesystem containing a resolved parent.
+ * @param target Literal link text; never resolved during creation.
+ * @param path Absolute link name with its parent already resolved and authorized.
+ * @return Zero or negative errno; serializes allocation and restores the active volume.
+ */
+int storage_symlink(const char *target, const char *path);
+/**
+ * @brief Reads literal symlink bytes while holding the storage execution lock.
+ * @param path Absolute name whose intermediate components have been resolved.
+ * @param buffer Writable kernel buffer; no NUL terminator is appended.
+ * @param capacity Positive buffer capacity in bytes.
+ * @param out_len Optional byte count, reset to zero on failure.
+ * @return Zero or negative errno, including EINVAL for a non-symlink.
+ */
+int storage_readlink(const char *path, char *buffer, uint32_t capacity, uint32_t *out_len);
+int storage_statfs(const struct storage_node *node, struct linux_statfs_abi *value);
+
 /**
  * @brief Maintains the next FAT32 cluster for one sequential file reader.
  *
@@ -84,6 +124,14 @@ struct storage_read_cursor {
 #define STORAGE_NODE_FLAG_EXFAT_NOFAT 0x00000020u
 #define STORAGE_NODE_FLAG_DEV_NODE 0x00000040u
 #define STORAGE_NODE_FLAG_DEV_BLOCK 0x00000080u
+#define STORAGE_NODE_FLAG_PROC    0x00000100u
+#define STORAGE_NODE_FLAG_SYSFS 0x00000400u
+#define STORAGE_NODE_FLAG_PTY   0x00000800u
+#define STORAGE_SYSFS_DEVICE 202u
+#define STORAGE_NODE_FLAG_DEV_LINK 0x00000200u
+/* Anonymous filesystem device numbers, also exported in proc mountinfo. */
+#define STORAGE_DEVFS_DEVICE 200u
+#define STORAGE_PROCFS_DEVICE 201u
 
 /* Device-node volume_id encoding for block devices.  The low 16 bits select
  * the physical disk; the high 16 bits contain GPT entry + 1, or zero for the
@@ -118,6 +166,8 @@ struct storage_read_cursor {
 #define STORAGE_DEV_KIND_KMSG      20u
 #define STORAGE_DEV_KIND_GPU         24u
 #define STORAGE_DEV_KIND_SHM         25u
+#define STORAGE_DEV_KIND_DISK_DIR    26u
+#define STORAGE_DEV_KIND_PARTUUID_DIR 27u
 
 struct boot_info;
 
@@ -129,6 +179,8 @@ void storage_init(void);
  * @brief Toggle asynchronous I/O for the calling context on or off.
  */
 void storage_set_io_async_context(bool enabled);
+/* Read under the kernel execution lock; changes on writes and mount/cache resets. */
+uint64_t storage_metadata_generation(void);
 /**
  * @brief Abandon any in-flight I/O owned by pid without completing it.
  */
@@ -226,6 +278,14 @@ int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
  * @brief Fill st with metadata for path; 0 on success.
  */
 int storage_stat_path(const char *path, struct leonos_stat *st);
+/** @brief Read a byte range of the current mount table, with proc-style escaping. */
+int storage_read_mounts(uint64_t offset, void *buffer, uint32_t capacity,
+                         uint32_t *out_read);
+/** @brief Read Linux mountinfo with IDs, parentage, devices and escaped paths. */
+int storage_read_mountinfo(uint64_t offset, void *buffer, uint32_t capacity,
+                           uint32_t *out_read);
+/** @brief Return a GPT UUID in a 37-byte buffer under the storage lock, or negative errno. */
+int storage_disk_partition_uuid(uint32_t disk_id, uint32_t partition_index, char uuid[37]);
 /**
  * @brief Create the directory path; 0 on success.
  */
@@ -249,6 +309,8 @@ int storage_rmdir(const char *path);
  * @brief Rename old_path to new_path; 0 on success.
  */
 int storage_rename(const char *old_path, const char *new_path);
+/** @brief Create a hard link to an existing regular file. */
+int storage_link(const char *old_path, const char *new_path);
 /**
  * @brief List up to capacity install disks into disks; count in out_count.
  */
@@ -259,7 +321,7 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
  */
 int storage_install_format_esp(uint32_t disk_id);
 /**
- * @brief Formats an installer target as a GPT disk with FAT32 ESP and exFAT root.
+ * @brief Formats an installer target as a GPT disk with FAT32 ESP and ext2 root.
  * @param disk_id Installer-selected AHCI, IDE/PATA, or NVMe disk identifier.
  * @return Zero on success or a negative errno-style storage error.
  */

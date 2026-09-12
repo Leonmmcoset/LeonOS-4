@@ -354,6 +354,64 @@ config LEON_COMPONENT_APP_NANO_SDK
     default n
     depends on LEON_COMPONENT_APP_NANO_BUILD
 
+config LEON_COMPONENT_TOOL_VIM_BUILD
+    bool "Build Vim"
+    default y
+    select LEON_COMPONENT_LIB_NCURSES_BUILD
+
+config LEON_COMPONENT_TOOL_VIM_IMAGE
+    bool "Include Vim in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_VIM_BUILD
+
+config LEON_COMPONENT_TOOL_VIM_ENTRY
+    bool "Generate a desktop entry for Vim"
+    default n
+    depends on LEON_COMPONENT_TOOL_VIM_BUILD
+
+config LEON_COMPONENT_TOOL_VIM_SDK
+    bool "Include Vim in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_VIM_BUILD
+
+config LEON_COMPONENT_TOOL_MUSL_GCC_BUILD
+    bool "Build Static musl GCC and binutils"
+    default y
+
+config LEON_COMPONENT_TOOL_MUSL_GCC_IMAGE
+    bool "Include Static musl GCC and binutils in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_MUSL_GCC_BUILD
+
+config LEON_COMPONENT_TOOL_MUSL_GCC_ENTRY
+    bool "Generate a desktop entry for Static musl GCC and binutils"
+    default n
+    depends on LEON_COMPONENT_TOOL_MUSL_GCC_BUILD
+
+config LEON_COMPONENT_TOOL_MUSL_GCC_SDK
+    bool "Include Static musl GCC and binutils in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_MUSL_GCC_BUILD
+
+config LEON_COMPONENT_TOOL_PYTHON_BUILD
+    bool "Build Python 3 with complete standard library"
+    default y
+
+config LEON_COMPONENT_TOOL_PYTHON_IMAGE
+    bool "Include Python 3 with complete standard library in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_PYTHON_BUILD
+
+config LEON_COMPONENT_TOOL_PYTHON_ENTRY
+    bool "Generate a desktop entry for Python 3 with complete standard library"
+    default n
+    depends on LEON_COMPONENT_TOOL_PYTHON_BUILD
+
+config LEON_COMPONENT_TOOL_PYTHON_SDK
+    bool "Include Python 3 with complete standard library in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_PYTHON_BUILD
+
 config LEON_COMPONENT_APP_FASTFETCH_BUILD
     bool "Build fastfetch system summary"
     default y
@@ -681,6 +739,29 @@ config LEON_COMPONENT_APP_OSCHINPT_API
 
 endmenu
 
+menu "Libraries"
+
+config LEON_COMPONENT_LIB_NCURSES_BUILD
+    bool "Build ncurses wide-character terminal library"
+    default y
+
+config LEON_COMPONENT_LIB_NCURSES_IMAGE
+    bool "Include ncurses wide-character terminal library in system images"
+    default y
+    depends on LEON_COMPONENT_LIB_NCURSES_BUILD
+
+config LEON_COMPONENT_LIB_NCURSES_ENTRY
+    bool "Generate a desktop entry for ncurses wide-character terminal library"
+    default n
+    depends on LEON_COMPONENT_LIB_NCURSES_BUILD
+
+config LEON_COMPONENT_LIB_NCURSES_SDK
+    bool "Include ncurses wide-character terminal library in the developer SDK"
+    default y
+    depends on LEON_COMPONENT_LIB_NCURSES_BUILD
+
+endmenu
+
 menu "Network and multimedia"
 
 config LEON_COMPONENT_APP_NETCTL_BUILD
@@ -820,25 +901,6 @@ endmenu
 
 menu "System applications"
 
-config LEON_COMPONENT_APP_OOBE_BUILD
-    bool "Build First-run setup"
-    default y
-
-config LEON_COMPONENT_APP_OOBE_IMAGE
-    bool "Include First-run setup in system images"
-    default y
-    depends on LEON_COMPONENT_APP_OOBE_BUILD
-
-config LEON_COMPONENT_APP_OOBE_ENTRY
-    bool "Generate a desktop entry for First-run setup"
-    default n
-    depends on LEON_COMPONENT_APP_OOBE_BUILD
-
-config LEON_COMPONENT_APP_OOBE_SDK
-    bool "Include First-run setup in the developer SDK"
-    default n
-    depends on LEON_COMPONENT_APP_OOBE_BUILD
-
 config LEON_COMPONENT_APP_SERVICEMGR_BUILD
     bool "Build Service control"
     default y
@@ -933,6 +995,44 @@ config LEON_COMPONENT_APP_SYSCONFDIALOG_SDK
     bool "Include System configuration dialog in the developer SDK"
     default n
     depends on LEON_COMPONENT_APP_SYSCONFDIALOG_BUILD
+
+config LEON_COMPONENT_APP_SUDO_BUILD
+    bool "Build sudo"
+    default y
+
+config LEON_COMPONENT_APP_SUDO_IMAGE
+    bool "Include sudo in system images"
+    default y
+    depends on LEON_COMPONENT_APP_SUDO_BUILD
+
+config LEON_COMPONENT_APP_SUDO_ENTRY
+    bool "Generate a desktop entry for sudo"
+    default n
+    depends on LEON_COMPONENT_APP_SUDO_BUILD
+
+config LEON_COMPONENT_APP_SUDO_SDK
+    bool "Include sudo in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_SUDO_BUILD
+
+config LEON_COMPONENT_APP_SU_BUILD
+    bool "Build su"
+    default y
+
+config LEON_COMPONENT_APP_SU_IMAGE
+    bool "Include su in system images"
+    default y
+    depends on LEON_COMPONENT_APP_SU_BUILD
+
+config LEON_COMPONENT_APP_SU_ENTRY
+    bool "Generate a desktop entry for su"
+    default n
+    depends on LEON_COMPONENT_APP_SU_BUILD
+
+config LEON_COMPONENT_APP_SU_SDK
+    bool "Include su in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_SU_BUILD
 
 endmenu
 

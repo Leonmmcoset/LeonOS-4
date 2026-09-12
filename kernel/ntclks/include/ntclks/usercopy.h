@@ -6,6 +6,16 @@
 #define NTCLKS_USERCOPY_H
 
 #include <ntclks/types.h>
+struct task;
+/**
+ * @brief Copy bytes into a pinned task's address space, including across COW pages.
+ * @param task Destination task whose mappings are stable under the execution lock.
+ * @param address Destination user virtual address.
+ * @param source Kernel source bytes.
+ * @param size Byte count to copy.
+ * @return Zero on success or -EFAULT, with earlier pages possibly already copied.
+ */
+int user_copy_to_task(struct task *task, uint64_t address, const void *source, uint64_t size);
 
 /**
  * @brief Return true when the user range [ptr, ptr+len) is mapped and accessible.

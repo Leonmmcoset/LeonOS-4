@@ -6,7 +6,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <leonos/posix.h>
 #include <leonos/app.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
@@ -22,6 +21,10 @@
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <linux/syscall.h>
+#include <leonos/layout.h>
+
+extern long syscall2(long number, long a0, long a1);
 
 #define LEONOS_CMD_JOB_MAX 16U
 #define LEONOS_CMD_JOB_PROCESS_MAX 64U
@@ -31,7 +34,7 @@
 
 /* Keep this local mirror of the task-snapshot wire layout so this POSIX
  * adapter does not include leonos/gui.h, which intentionally exposes the
- * native filesystem stat ABI rather than Picolibc's POSIX stat ABI. */
+ * LeonOS filesystem metadata extension ABI. */
 struct leonos_cmd_task_info {
     uint32_t pid;
     uint32_t parent_pid;
@@ -95,34 +98,28 @@ static void fill_exit_info(int status, libcmd_exit_info_t *exit_info)
 
 int chmod(const char *path, mode_t mode)
 {
-    (void)path;
-    (void)mode;
+    long ret = syscall2(SYS_chmod, (long)path, mode);
+    if (ret < 0) { errno = (int)-ret; return -1; }
     return 0;
 }
 
 int link(const char *old_path, const char *new_path)
 {
-    (void)old_path;
-    (void)new_path;
-    errno = ENOSYS;
-    return -1;
+    long ret = syscall2(SYS_link, (long)old_path, (long)new_path);
+    if (ret < 0) { errno = (int)-ret; return -1; }
+    return (int)ret;
 }
 
 int symlink(const char *target, const char *link_path)
 {
-    (void)target;
-    (void)link_path;
-    errno = ENOSYS;
-    return -1;
+    long ret = syscall2(SYS_symlink, (long)target, (long)link_path);
+    if (ret < 0) { errno = (int)-ret; return -1; }
+    return (int)ret;
 }
 
 ssize_t readlink(const char *path, char *buffer, size_t length)
 {
-    (void)path;
-    (void)buffer;
-    (void)length;
-    errno = ENOSYS;
-    return -1;
+    return (ssize_t)syscall(SYS_readlink, path, buffer, length);
 }
 
 int statvfs(const char *path, struct statvfs *st)
@@ -228,9 +225,16 @@ static const char *const busybox_applets[] = {
     "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo", "env",
     "false", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
     "rm", "rmdir", "sha256sum", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc",
-    "fdisk", "mkfs.fat", "mkfs.fat32", "mkfs.vfat", "mkfs.ext2", "mkfs.exfat",
-    "mount", "umount", "fsck", "fsck.fat", "fsck.fat32", "fsck.vfat", "fsck.ext2",
-    "fsck.exfat", "blkid", "lsblk", "leonos-grub-installer", "sync", NULL,
+    "sync", NULL,
+};
+
+static const char *const storage_commands[] = {
+    "/usr/sbin/fdisk", "/usr/sbin/sfdisk", "/usr/sbin/blkid", "/usr/sbin/fsck",
+    "/usr/sbin/mkfs.fat", "/usr/sbin/mkfs.fat32", "/usr/sbin/mkfs.vfat",
+    "/usr/sbin/mkfs.ext2", "/usr/sbin/mkfs.exfat", "/usr/sbin/fsck.fat",
+    "/usr/sbin/fsck.fat32", "/usr/sbin/fsck.vfat", "/usr/sbin/fsck.ext2",
+    "/usr/sbin/fsck.exfat", "/usr/sbin/leonos-grub-installer",
+    "/bin/mount", "/bin/umount", "/bin/lsblk", NULL,
 };
 
 static int job_name_equal(const char *left, const char *right)
@@ -378,9 +382,15 @@ int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t o
             return copy_exec_path(out, out_size, name);
         return -1;
     }
+    /* Storage tools are independently packaged, never BusyBox applets. */
+    for (index = 0; storage_commands[index]; ++index) {
+        const char *path = storage_commands[index];
+        if (command_name_equal(name, strrchr(path, '/') + 1))
+            return copy_exec_path(out, out_size, path);
+    }
     for (index = 0; busybox_applets[index]; ++index) {
         if (command_name_equal(name, busybox_applets[index]))
-            return copy_exec_path(out, out_size, "/programs/busybox/busybox.elf");
+            return copy_exec_path(out, out_size, "/bin/busybox");
     }
     if (leonos_app_registry_resolve(name, out, out_size) == 0)
         return 0;
@@ -411,7 +421,7 @@ static int child_exec_path(const char *path, char *const argv[], char *const env
         errno = EINVAL;
         return -1;
     }
-    busybox_dispatch = strcmp(path, "/programs/busybox/busybox.elf") == 0;
+    busybox_dispatch = strcmp(path, "/bin/busybox") == 0;
 
     if (!busybox_dispatch) {
         return execve(path, argv, envp ? envp : environ);

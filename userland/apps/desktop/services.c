@@ -1,4 +1,9 @@
 #include "desktop.h"
+#include <errno.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static pid_t service_daemon_pid;
 
 static uint32_t service_key_len(const char *text)
 {
@@ -82,13 +87,22 @@ void desktop_service_daemon_update(void)
     struct leonos_stat st;
     unsigned long now;
     int pid;
+    if (service_daemon_pid > 0) {
+        int status;
+        pid_t reaped = waitpid(service_daemon_pid, &status, WNOHANG);
+        if (reaped == 0 || (reaped < 0 && errno == EINTR)) return;
+        if (reaped < 0 && errno != ECHILD) return;
+        fprintf(stderr, "[desktop.elf] service daemon exited; scheduling restart\n");
+        service_daemon_pid = 0;
+        desktop_service_daemon_started = 0;
+    }
     if (desktop_service_daemon_started) {
         return;
     }
     /* The installer runtime deliberately contains only the window server,
      * installer, and recovery UI. serviced.elf is payload under
      * /install/root, not an executable for the read-only installer root. */
-    if (leonos_stat_legacy("/system/apps/installer/installer.elf", &st) == 0 &&
+    if (leonos_stat_legacy(LEONOS_LAYOUT_LEONOS_APPS "/installer/installer.elf", &st) == 0 &&
         st.type == LEONOS_FS_TYPE_FILE &&
         leonos_stat_legacy(SERVICE_DAEMON_PATH, &st) < 0) {
         desktop_service_daemon_started = 1;
@@ -101,8 +115,16 @@ void desktop_service_daemon_update(void)
         return;
     }
     desktop_service_daemon_last_spawn_ms = now;
-    pid = spawn_program_path("serviced");
-    if (pid > 0 || pid == -LEONOS_EEXIST) {
+    /* This fixed system service runs before login and retains root. Ordinary
+     * application launches must continue to apply the PAM user session. */
+    if (getuid() != 0 || geteuid() != 0) return;
+    pid = fork();
+    if (pid == 0) {
+        execl(SERVICE_DAEMON_PATH, SERVICE_DAEMON_PATH, (char *)NULL);
+        _exit(127);
+    }
+    if (pid > 0) {
+        service_daemon_pid = pid;
         desktop_service_daemon_started = 1;
     }
 }

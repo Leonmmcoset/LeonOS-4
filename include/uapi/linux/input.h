@@ -20,11 +20,21 @@ struct input_id {
     uint16_t version;
 };
 
+struct input_absinfo {
+    int32_t value;
+    int32_t minimum;
+    int32_t maximum;
+    int32_t fuzz;
+    int32_t flat;
+    int32_t resolution;
+};
+
 #define EV_SYN 0x00
 #define EV_KEY 0x01
 #define EV_REL 0x02
 #define EV_ABS 0x03
 #define EV_MSC 0x04
+#define EV_LED 0x11
 #define EV_MAX 0x1f
 #define EV_CNT (EV_MAX + 1)
 
@@ -42,6 +52,7 @@ struct input_id {
 #define KEY_LEFTSHIFT 42
 #define KEY_LEFTALT 56
 #define KEY_SPACE 57
+#define KEY_CAPSLOCK 58
 #define KEY_F1 59
 #define KEY_F12 88
 #define KEY_RIGHTCTRL 97
@@ -73,12 +84,21 @@ struct input_id {
 #define REL_Y 0x01
 #define REL_WHEEL 0x08
 
+#define ABS_X 0x00
+#define ABS_Y 0x01
+
+#define LED_CAPSL 0x01
+#define LED_MAX 0x0f
+#define LED_CNT (LED_MAX + 1)
+
 #define EVIOCGVERSION _IOR('E', 0x01, int)
+#define EVIOCGLED(len) _IOC(_IOC_READ, 'E', 0x19, (len))
 #define EVIOCGID _IOR('E', 0x02, struct input_id)
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, (len))
 #define EVIOCGPHYS(len) _IOC(_IOC_READ, 'E', 0x07, (len))
 #define EVIOCGBIT(ev, len) _IOC(_IOC_READ, 'E', 0x20 + (ev), (len))
 #define EVIOCGKEY(len) _IOC(_IOC_READ, 'E', 0x18, (len))
+#define EVIOCGABS(axis) _IOR('E', 0x40 + (axis), struct input_absinfo)
 #define EVIOCGRAB _IOW('E', 0x90, int)
 
 #endif

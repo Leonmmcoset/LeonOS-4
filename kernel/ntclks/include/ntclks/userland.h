@@ -12,6 +12,7 @@
 #include <ntclks/types.h>
 
 struct task;
+struct storage_node;
 
 /* Serialize executable and lazy file-backed page loading.  The storage
  * backend and ELF parser both contain shared state and are not reentrant. */
@@ -30,6 +31,8 @@ void userland_process_exit(uint64_t code);
 /**
  * @brief Replaces the current process image while preserving its PID and process attributes.
  * @param path Resolved executable path.
+ * @param held Resolved executable object under the execution transaction.
+ * @param execfn Original executable filename for AT_EXECFN.
  * @param argc Number of kernel-copied argv entries.
  * @param argv Kernel-owned argv pointers into data.
  * @param envc Number of kernel-copied envp entries.
@@ -38,7 +41,8 @@ void userland_process_exit(uint64_t code);
  * @param data_len Number of valid data bytes.
  * @return Zero on success, or a negative errno-style failure with the old image intact.
  */
-int userland_exec_current_path(const char *path, uint32_t argc, char *const argv[],
+int userland_exec_current_node(const char *path, const struct storage_node *held, const char *execfn,
+                               uint32_t argc, char *const argv[],
                                uint32_t envc, char *const envp[],
                                const char *data, uint32_t data_len);
 /**

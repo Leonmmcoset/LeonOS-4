@@ -220,7 +220,7 @@ static int block_io(int fd, uint64_t offset, void *buffer, uint32_t length, int 
     if (!buffer || (offset & (BLOCK_SECTOR_SIZE - 1u)) ||
         (length & (BLOCK_SECTOR_SIZE - 1u))) return -BLOCK_EINVAL;
     position = lseek(fd, (long)offset, 0);
-    if (position < 0) return (int)position;
+    if (position < 0) return -errno;
     while (done < length) {
         uint32_t chunk = length - done;
         long ret;
@@ -231,7 +231,10 @@ static int block_io(int fd, uint64_t offset, void *buffer, uint32_t length, int 
          * valid disk into a false EIO. */
         if (chunk > BLOCK_IO_SLICE) chunk = BLOCK_IO_SLICE;
         ret = write_mode ? write(fd, bytes + done, chunk) : read(fd, bytes + done, chunk);
-        if (ret < 0) return (int)ret;
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            return -errno;
+        }
         if (ret == 0 || (ret & (BLOCK_SECTOR_SIZE - 1u)) != 0) return -BLOCK_EIO;
         if ((uint32_t)ret > chunk) return -BLOCK_EIO;
         done += (uint32_t)ret;
@@ -261,16 +264,18 @@ static int block_open_info(const char *path, int writable, int *out_fd,
     long ret;
     if (!path || !out_fd || !out_sectors || !out_sector_size) return -BLOCK_EINVAL;
     fd = open(path, writable ? O_RDWR : O_RDONLY, 0);
-    if (fd < 0) return fd;
+    if (fd < 0) return -errno;
     ret = ioctl(fd, BLKGETSIZE64, &bytes);
     if (ret < 0) {
+        int error = errno;
         (void)close(fd);
-        return (int)ret;
+        return -error;
     }
     ret = ioctl(fd, BLKSSZGET, &sector_size);
     if (ret < 0) {
+        int error = errno;
         (void)close(fd);
-        return (int)ret;
+        return -error;
     }
     if (sector_size != BLOCK_SECTOR_SIZE || !bytes || bytes % BLOCK_SECTOR_SIZE) {
         (void)close(fd);
@@ -567,7 +572,7 @@ static int block_gpt_write_fd(int fd, struct block_gpt_table *table)
 static int block_reread(int fd)
 {
     long ret = ioctl(fd, BLKRRPART, 0);
-    return ret < 0 ? (int)ret : 0;
+    return ret < 0 ? -errno : 0;
 }
 
 int leonos_block_get_info(const char *path, struct leonos_block_disk_info *out)
@@ -742,6 +747,29 @@ int leonos_block_list_partitions(const char *disk_path,
     block_gpt_free(&table);
     *out_count = count;
     return 0;
+}
+
+int leonos_block_partition_uuid(const char *disk_path, uint32_t index, char uuid[37])
+{
+    int fd;
+    uint64_t sectors;
+    uint32_t sector_size;
+    struct block_gpt_table table;
+    if (!uuid) return -BLOCK_EINVAL;
+    int ret = block_open_info(disk_path, 0, &fd, &sectors, &sector_size);
+    if (ret < 0) return ret;
+    ret = block_gpt_load_fd(fd, sectors, &table);
+    (void)close(fd);
+    if (ret < 0) return ret;
+    if (index >= table.primary.partition_entry_count ||
+        block_guid_empty(table.entries[index].type_guid)) ret = -BLOCK_ENOENT;
+    else {
+        const uint8_t *g = table.entries[index].unique_guid;
+        snprintf(uuid, 37, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                 g[3],g[2],g[1],g[0],g[5],g[4],g[7],g[6],g[8],g[9],g[10],g[11],g[12],g[13],g[14],g[15]);
+    }
+    block_gpt_free(&table);
+    return ret;
 }
 
 static int block_gpt_update(const char *disk_path,

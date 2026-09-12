@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include "desktop.h"
 
 #define DESKTOP_INPUTM_CONFIG_MAX 2048U
@@ -33,8 +34,8 @@ static int inputm_config_path(char *path, uint32_t capacity, uint32_t *out_uid)
 {
     struct leonos_user_info user = {0};
     uint32_t len;
-    if (!path || capacity == 0 || leonos_auth_current(&user) < 0 ||
-        !user.uid || !user.home[0]) {
+    if (!path || capacity == 0 || leonos_session_current(&user) < 0 ||
+        !user.home[0]) {
         return 0;
     }
     len = inputm_text_len(user.home);

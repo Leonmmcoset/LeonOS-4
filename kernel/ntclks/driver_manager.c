@@ -12,6 +12,7 @@
 #include <ntclks/pci.h>
 #include <ntclks/storage.h>
 #include <ntclks/time.h>
+#include <leonos/layout.h>
 
 #include "arch/x86_64/port.h"
 
@@ -45,8 +46,8 @@ static void early_serial_write(const char *text)
     }
 }
 
-#define DRIVER_DIRECTORY "/drivers"
-#define DRIVER_CONFIG_PATH "/system/config/drivers.conf"
+#define DRIVER_DIRECTORY LEONOS_LAYOUT_LEONOS_DRIVERS
+#define DRIVER_CONFIG_PATH LEONOS_PATH_DRIVERS_CONF
 #define DRIVER_CONFIG_CAP 1024U
 #define DRIVER_ELF_MAX_SECTIONS 64U
 #define DRIVER_ELF_MAX_IMAGE (4U * 1024U * 1024U)
@@ -269,7 +270,7 @@ static int driver_load_order_compare(const char *left, const char *right)
 }
 
 /**
- * @brief Build "/drivers/<file>" into dst, clamped to cap bytes and NUL-terminated.
+ * @brief Build "/usr/lib/leonos/drivers/<file>" into dst, clamped to cap bytes and NUL-terminated.
  */
 static void driver_make_path(char *dst, uint32_t cap, const char *file)
 {

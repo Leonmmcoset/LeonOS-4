@@ -3,7 +3,7 @@
 .type syscall0, @function
 syscall0:
     mov %rdi, %rax
-    int $0x80
+    syscall
     ret
 
 .global syscall1
@@ -11,7 +11,7 @@ syscall0:
 syscall1:
     mov %rdi, %rax
     mov %rsi, %rdi
-    int $0x80
+    syscall
     ret
 
 .global syscall2
@@ -20,7 +20,7 @@ syscall2:
     mov %rdi, %rax
     mov %rsi, %rdi
     mov %rdx, %rsi
-    int $0x80
+    syscall
     ret
 
 .global syscall3
@@ -30,7 +30,7 @@ syscall3:
     mov %rsi, %rdi
     mov %rdx, %rsi
     mov %rcx, %rdx
-    int $0x80
+    syscall
     ret
 
 .global syscall6
@@ -43,7 +43,7 @@ syscall6:
     mov %r8, %r10
     mov %r9, %r8
     mov 8(%rsp), %r9
-    int $0x80
+    syscall
     ret
 
 /*
@@ -57,7 +57,7 @@ syscall6:
 .type leonos_rt_sigreturn_trampoline, @function
 leonos_rt_sigreturn_trampoline:
     mov $15, %rax
-    int $0x80
+    syscall
 1:
     hlt
     jmp 1b

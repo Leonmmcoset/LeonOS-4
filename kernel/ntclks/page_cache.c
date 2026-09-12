@@ -185,7 +185,10 @@ void page_cache_invalidate_node(const struct storage_node *node)
     }
     kernel_spin_lock_irqsave(&cache_lock, &flags);
     for (uint32_t i = 0; i < PAGE_CACHE_MAX; ++i) {
-        if (entries[i].used && node_equal(&entries[i].node, node) && !entries[i].refs) {
+        const struct storage_node *cached = &entries[i].node;
+        if (entries[i].used && cached->type == node->type &&
+            cached->volume_id == node->volume_id && cached->first_cluster == node->first_cluster &&
+            !entries[i].refs) {
             mm_free_page(entries[i].phys);
             entries[i] = (struct page_cache_entry){0};
         }

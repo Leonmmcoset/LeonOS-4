@@ -19,7 +19,7 @@ the required GB wire extensions in `drivers/bootstrap/svga/gb_protocol.h`.
 
 Start glxgears from its existing desktop entry, or from a GUI terminal:
 
-    /programs/glxgears/glxgears.elf
+    /usr/lib/leonos/apps/glxgears/glxgears.elf
 
 No boot parameter is required. The app prefers SVGA3D when 3D is available and
 prints `glxgears: renderer=VMware SVGA3D hardware`. Otherwise, or if hardware

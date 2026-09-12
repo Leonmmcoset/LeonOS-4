@@ -14,19 +14,19 @@ SDK 头文件和静态库已经提供的接口；没有出现在头文件中的�
    [LIBRARIES.md](LIBRARIES.md)。
 5. 需要设计生命周期、I/O 和安全边界时阅读 [PROGRAMS.md](PROGRAMS.md)。
 
-Picolibc 的运行时接入和镜像内 TinyCC 的限制仍分别记录在 SDK 根目录的
-`README-picolibc.md` 和 `README-tcc.md`；它们补充本目录的通用文档。
+musl 的运行时接入和镜像内 TinyCC 的限制仍分别记录在 SDK 根目录的
+`README-musl.md` 和 `README-tcc.md`；它们补充本目录的通用文档。
 
 ## SDK 目录
 
 | 路径 | 用途 |
 | --- | --- |
-| `include/` | Picolibc 兼容头文件、LeonOS 公开头文件以及第三方公开头文件 |
-| `lib/leonos.a` | LeonOS 系统调用封装、GUI/UI、文件、网络等公共库 |
-| `lib/libc.a` | 与当前 SDK 匹配的 Picolibc 静态库 |
+| `include/` | musl 兼容头文件、LeonOS 公开头文件以及第三方公开头文件 |
+| `lib/libleonos.a` | LeonOS 系统调用封装、GUI/UI、文件、网络等公共库 |
+| `lib/libc.a` | 与当前 SDK 匹配的 musl 静态库 |
 | `lib/libz.a`、`lib/libpng.a` | zlib 和 libpng 静态库 |
 | `lib/libstardustui.a` | 可选的 StardustUI C++ 静态库（构建该组件时提供） |
-| `linker.ld` | 用户态 ELF 链接布局，入口为 `_start` |
+| `bin/leonos-musl-cc` | musl CRT、mimalloc 和动态加载器的统一编译驱动 |
 | `examples/` | C、C++ 和 InputM 示例 |
 | `docs/` | 本文档 |
 | `THIRD_PARTY/` | 第三方许可证和版本信息（SDK ZIP 中） |
@@ -52,7 +52,7 @@ SDK 是 freestanding x86_64 用户态环境。它不包含宿主系统的动态�
 
 ## 版本与错误处理
 
-应用、`include/`、`lib/leonos.a` 和运行中的 LeonOS 版本必须来自同一 SDK
+应用、`include/`、`lib/libleonos.a` 和运行中的 LeonOS 版本必须来自同一 SDK
 发布。大多数封装直接返回内核或服务返回值；失败时应检查小于零的结果，
 不要只依赖宿主机的 `errno` 语义。网络和音频接口另外在结果结构中返回
 状态码。所有来自文件、网络、窗口事件的长度都必须在应用侧再次校验。

@@ -1,0 +1,6 @@
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+for profile in /etc/profile.d/*.sh; do
+    if [ -r "$profile" ]; then . "$profile"; fi
+done
+unset profile

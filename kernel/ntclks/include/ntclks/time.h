@@ -10,6 +10,8 @@
 #define NTCLKS_TICK_HZ 100ULL
 
 struct leonos_time_info;
+struct linux_timespec;
+int time_clock_get(int32_t clock, struct linux_timespec *value);
 
 /**
  * @brief Initialize the tick counter and read the RTC wall clock.

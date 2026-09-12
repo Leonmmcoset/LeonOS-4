@@ -1,3 +1,7 @@
+> 2026-09-08：默认 SDK 已迁移至 musl 1.2.6 + mimalloc 3.5.1。构建以
+> `docs/BUILDING.md` 和当前 Makefile 为准，旧 ABI 二进制必须重建。
+> TinyCC 已在 QEMU 中编译并执行 musl 测试程序，退出码为 0；完整程序覆盖仍待验证。
+
 # LeonOS 4 Developer SDK
 
 这个目录是 LeonOS 4 用户态应用开发套件。它可以单独复制到没有
@@ -7,17 +11,14 @@ ELF 应用程序。
 ## 内容
 
 - `include/`: LeonOS 4 用户态 C 标准库兼容头文件和公开系统 API。
-- `include/curses.h` 与 `include/ncurses.h`: 由 `libleonos.so.1` 提供的共享
-  ANSI curses 子集，普通终端程序可直接使用，不需要复制 Nano 或 `sl` 的
-  curses 兼容层。
-- `include/leonos/posix.h`: 共享文件状态适配器。目录遍历、`fcntl` 与
-  `access` 则直接使用 SDK 内 Picolibc 提供的标准 POSIX 头文件，运行库已
-  包含实现。
-- `fork`、`execve`、`waitpid`、管道、描述符复制、进程组、前台终端组、
-  `kill`、优先级和资源限制同样由 `libleonos.so.1` 统一实现；直接包含
-  Picolibc 的标准 `<unistd.h>`、`<sys/wait.h>`、`<fcntl.h>`、`<signal.h>`
-  和 `<sys/resource.h>`。自定义 signal handler 尚未支持。
-- `lib/libc.a`: 与本 SDK 头文件匹配的 freestanding 用户态 C 库。
+- `include/curses.h` 与 `include/ncurses.h`: ncurses 6.6 的上游宽字符接口，
+  链接 `libncursesw.a` 和 `libtinfow.a`，Makefile 使用 `USE_NCURSES=1`。
+  terminfo 数据库位于 `share/terminfo`，系统镜像安装到 `/usr/share/terminfo`。
+- POSIX 标准接口（文件、进程、信号、pthread、socket、资源限制）使用 musl
+  的标准头文件和 `libc.so`。LeonOS 内核的实现范围以项目 ABI 清单为准。
+- `lib/libc.so` 与 `lib/libc.a`：musl 动态和静态 C 库；动态库同时提供加载器。
+- `lib/libmimalloc.so.3` 与 `lib/mimalloc.o`：动态和静态分配器。
+- `lib/libleonos.so.2` 与 `lib/libleonos.a`：LeonOS GUI 和系统扩展。
 - `lib/libz.a` 与 `lib/libpng.a`: zlib 1.3.2 和 libpng 1.6.58 静态库；对应
   的公开头文件与许可证也包含在 SDK 中。
 - `lib/libstardustui.a`: StardustUI 静态 GUI 库，含 LeonOS 像素窗口后端、
@@ -28,7 +29,7 @@ ELF 应用程序。
   头文件为 `include/lua5.4/`。
 - `lib/sqlite.so.3` 与 `lib/sqlite.a`: SQLite 3.46.1 的动态和静态 C API，
   公共头文件为 `include/sqlite3.h`。
-- `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
+- `bin/leonos-musl-cc`：选择 SDK 内 musl 启动对象、库和加载器的编译驱动。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
 - `docs/`: 按主题拆分的系统调用、GUI/UI、InputM、公共库、构建和打包文档。
@@ -37,21 +38,9 @@ ELF 应用程序。
 
 ## 前置条件
 
-需要一个可以生成 freestanding x86_64 ELF 的交叉工具链。默认工具名为：
-
-```text
-x86_64-elf-gcc
-x86_64-elf-ld
-```
-
-Makefile 也可使用其他前缀。例如工具名是 `x86_64-unknown-elf-gcc` 时：
-
-```sh
-make CROSS=x86_64-unknown-elf-
-```
-
-在 Windows 上建议从 WSL、MSYS2 或其他提供 GNU Make 与交叉工具链的
-环境执行构建。
+在 Linux 或 WSL 中安装 Python 3、GNU Make、Clang 和 LLD。默认 Makefile
+通过 `bin/leonos-musl-cc` 使用 SDK 内的头文件、musl CRT 和库，无需另装
+`x86_64-elf-gcc`。详细命令见 [BUILDING.md](docs/BUILDING.md)。
 
 ## 构建示例
 
@@ -77,7 +66,7 @@ make clean
 
 1. 复制 `examples/helloworld` 为你的应用目录，例如 `examples/myapp`。
 2. 修改其中的 `main.c`。程序入口是普通的 `int main(void)`；默认动态运行时
-   的 `libleonos.so.1` 会提供系统调用封装和常用 C 库函数。需要完整静态程序
+   由 musl 提供系统调用封装和标准 C 库，mimalloc 提供分配器。需要静态程序
    时使用 `STATIC=1`。
 3. 构建：
 
@@ -88,7 +77,7 @@ make APP=examples/myapp APP_NAME=myapp
 结果是 `build/myapp.elf`。将其复制到 LeonOS 分区中的可执行位置，例如：
 
 ```text
-/programs/myapp/myapp.elf
+/usr/lib/leonos/apps/myapp/myapp.elf
 ```
 
 可由桌面、文件管理器或 `leonos_launch_argv()` 启动；需要 POSIX 启动语义时使用
@@ -124,8 +113,8 @@ LeonOS 使用现有 UI 字体渲染器；StardustUI 的字体路径配置不会�
 ### 虚拟终端应用
 
 不创建 GUI 窗口、而是需要标准输入输出渲染的应用，可在 ELF 同目录放置同名
-sidecar manifest。例如 `/programs/myapp/myapp.elf` 的标记文件是
-`/programs/myapp/myapp.app.ini`：
+sidecar manifest。例如 `/usr/lib/leonos/apps/myapp/myapp.elf` 的标记文件是
+`/usr/lib/leonos/apps/myapp/myapp.app.ini`：
 
 ```ini
 [app]
@@ -155,7 +144,7 @@ terminal=1
 `leonos/stdio.h` 提供 `puts()` 和 `printf()`。`leonos/syscall.h` 提供
 文件、进程、内存和调度相关接口。`leonos/gui.h` 与 `leonos/ui.h` 提供
 窗口、事件与软件绘制接口。文件路径使用 Unix 风格根目录，例如
-`/programs/myapp/data.txt`；可移动卷使用 `/mnt` 或 `/media` 下的挂载点。
+`/usr/lib/leonos/apps/myapp/data.txt`；可移动卷使用 `/mnt` 或 `/media` 下的挂载点。
 
 ### 窗口与鼠标控制
 
@@ -183,10 +172,10 @@ leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_HAND);
 位置使用桌面的逻辑像素坐标。所有这类接口都只允许应用控制自己创建的
 `window_id`；窗口销毁后，任务栏和光标样式会自动恢复。
 
-程序必须是 freestanding：不要依赖宿主系统的动态链接器、POSIX 运行时或
-宿主系统的库。默认构建使用 LeonOS 的 `/system/lib/ld-leonos.elf` 和
-`libleonos.so.1`；请保留 Makefile 的编译和链接参数。`STATIC=1` 才会改用
-SDK 中的静态归档与 `linker.ld`。
+程序使用 SDK 的目标头文件与库，不能混入宿主机 libc。默认动态加载器为
+`/lib/ld-musl-x86_64.so.1`；`libc.so` 和 mimalloc 位于 `/lib`，LeonOS 扩展库
+位于 `/usr/lib/leonos`。`STATIC=1` 使用同一套 ABI 的静态 CRT 和归档。
+旧私有 ABI 应用必须从源码重建，不能仅重命名旧共享库。
 
 ### PNG 图像
 
@@ -200,7 +189,7 @@ LeonOS 的受限文件解码接口：
 uint32_t *pixels;
 uint32_t width;
 uint32_t height;
-if (leonos_png_decode_file("/programs/demo/image.png", &pixels, &width, &height) == 0) {
+if (leonos_png_decode_file("/usr/lib/leonos/apps/demo/image.png", &pixels, &width, &height) == 0) {
     /* pixels are 0x00RRGGBB and alpha has been composited on white. */
     leonos_png_free(pixels);
 }

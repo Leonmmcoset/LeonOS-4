@@ -46,6 +46,7 @@ def text_keys(text: str) -> tuple[str, ...]:
         # `bar` is accepted by some builds but does not inject a character on
         # the guest keyboard layout used by LeonOS.
         "|": "shift-backslash",
+        "&": "shift-7",
     }
     keys: list[str] = []
     for character in text:
@@ -61,6 +62,7 @@ def main() -> int:
     skip_oobe = False
     exit_only = False
     tcc_smoke = False
+    gcc_smoke = False
     desktop_app: str | None = None
     login_password: str | None = None
     editor = "nano"
@@ -83,6 +85,9 @@ def main() -> int:
         arguments = arguments[1:]
     if arguments and arguments[0] == "--tcc":
         tcc_smoke = True
+        arguments = arguments[1:]
+    if arguments and arguments[0] == "--gcc":
+        gcc_smoke = True
         arguments = arguments[1:]
     if arguments and arguments[0] == "--fastfetch":
         fastfetch_smoke = True
@@ -126,7 +131,7 @@ def main() -> int:
     if len(arguments) >= 2 and arguments[0] == "--editor":
         editor = arguments[1]
         arguments = arguments[2:]
-    if editor not in ("nano", "pleditor", "vi"):
+    if editor not in ("nano", "pleditor", "vi", "vim"):
         return 2
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
@@ -167,7 +172,7 @@ def main() -> int:
         send_keys(sock, tuple(login_password) + ("ret",))
         time.sleep(2.0)
     hmp(sock, "sendkey meta_l", 0.5)
-    # Opening Start is asynchronous.  Give the menu time to claim keyboard
+    # Opening Start is asynchronous. Give the menu time to claim keyboard
     # focus before the search text starts arriving.
     time.sleep(1.5)
 
@@ -203,6 +208,19 @@ def main() -> int:
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 
+    if gcc_smoke:
+        for command, delay in (
+            ("musl-gcc --version", 2),
+            ("musl-gcc -static /usr/share/examples/musl-gcc/hello.c -o /tmp/gcc-hello", 30),
+            ("/tmp/gcc-hello", 3),
+            ("ld --version", 2),
+        ):
+            send_keys(sock, text_keys(command) + ("ret",))
+            time.sleep(delay)
+        hmp(sock, "screendump build/images/gcc-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
     if fastfetch_single:
         send_keys(sock, text_keys("fastfetch") + ("ret",))
         time.sleep(3.0)
@@ -221,7 +239,7 @@ def main() -> int:
         return 0
 
     if less_smoke:
-        send_keys(sock, text_keys("less /programs/tcc/examples/hello.c") + ("ret",))
+        send_keys(sock, text_keys("less /opt/tcc/examples/hello.c") + ("ret",))
         # The pager must still own the PTY before the quit key is sent. A
         # successful launch renders the first page and waits for input.
         time.sleep(1.0)
@@ -272,9 +290,11 @@ def main() -> int:
         # execute the resulting ELF through the resident BusyBox shell. Use
         # an absolute source path so this test exercises TCC rather than
         # depending on a previous shell cwd change.
-        output_path = "/programs/tcc/examples/a.out"
-        send_keys(sock, text_keys(f"tcc /programs/tcc/examples/hello.c -o {output_path}") + ("ret",))
-        # The first full compile parses the staged Picolibc headers from the
+        # System program directories are root-owned; the OOBE account compiles
+        # into its writable workspace, just as a normal Linux user would.
+        output_path = "/tmp/leonos-tcc-smoke"
+        send_keys(sock, text_keys(f"tcc /opt/tcc/examples/hello.c -o {output_path}") + ("ret",))
+        # The first full compile parses the staged musl headers from the
         # image filesystem. On a cold QEMU guest that can exceed the generic editor
         # smoke-test delay, so do not inject the executable command while the
         # compiler still owns the PTY.
@@ -320,7 +340,7 @@ def main() -> int:
         # Terminal and desktop have the runtime resident already.  Deleting
         # the on-disk runtime must therefore leave the desktop available to
         # display the statically linked recovery window for the next launch.
-        send_keys(sock, text_keys("rm /system/lib/libleonos.so.1") + ("ret",))
+        send_keys(sock, text_keys("rm /usr/lib/leonos/libleonos.so.1") + ("ret",))
         time.sleep(2.0)
         send_keys(sock, text_keys("nano") + ("ret",))
         time.sleep(5.0)
@@ -349,11 +369,23 @@ def main() -> int:
         "nano": "nanotest.txt",
         "pleditor": "pleditortest.txt",
         "vi": "vitest.txt",
+        # Keep the file in the login user's writable working directory.  The
+        # image does not promise a pre-created /tmp hierarchy, and Vim must
+        # exercise its normal write/quit path rather than fail with E212.
+        "vim": "vimtest.txt",
     }[editor]
-    send_keys(sock, text_keys(f"{editor} {filename}") + ("ret",))
+    editor_command = (f"vim -n {filename}"
+                      if editor == "vim" else f"{editor} {filename}")
+    send_keys(sock, text_keys(editor_command) + ("ret",))
     # The editor is loaded lazily; wait until its first userspace scheduling
     # turn before sending raw-mode input.
     time.sleep(5.0)
+    if editor == "vim" and serial_log_path is not None:
+        serial_text = serial_log_path.read_text(encoding="utf-8", errors="replace")
+        if not any(path in serial_text for path in
+                   ("path=/bin/vim ", "path=/usr/bin/vim ")):
+            hmp(sock, "screendump build/images/vim-launch-failed.ppm", 0.4)
+            raise RuntimeError("Vim was not executed by the Terminal shell")
     if exit_only:
         hmp(sock, "sendkey ctrl-x" if editor == "nano" else
             ("sendkey ctrl-q" if editor == "pleditor" else "sendkey esc"), 20.0)
@@ -371,6 +403,8 @@ def main() -> int:
         hmp(sock, "sendkey ctrl-q", 2.0)
     else:
         send_keys(sock, ("i",) + text_keys("vismoke") + ("esc",))
+        if editor == "vim":
+            hmp(sock, "screendump build/images/vim-active-qmp-smoke.ppm", 0.4)
         send_keys(sock, text_keys(":wq") + ("ret",))
 
     send_keys(sock, text_keys(f"cat {filename}") + ("ret",))

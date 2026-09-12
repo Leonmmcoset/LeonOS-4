@@ -44,6 +44,8 @@ struct leonos_block_partition {
 int leonos_block_list_disks(struct leonos_block_disk_info *disks, uint32_t capacity,
                             uint32_t *out_count);
 int leonos_block_get_info(const char *path, struct leonos_block_disk_info *out);
+/* Read the validated GPT unique partition GUID into a 37-byte buffer. */
+int leonos_block_partition_uuid(const char *disk_path, uint32_t index, char uuid[37]);
 int leonos_block_list_partitions(const char *disk_path,
                                  struct leonos_block_partition *partitions,
                                  uint32_t capacity, uint32_t *out_count);

@@ -2,6 +2,11 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 
+#include <errno.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "installer_sha256.h"
 
 #define INSTALLER_SHA256_COPY_BUF_SIZE (64U * 1024U)
@@ -164,18 +169,62 @@ static int installer_hash_equal(const uint8_t *left, const uint8_t *right, uint3
     return 1;
 }
 
+/* Read a symlink target without following it.  *is_link is set to 0 for a
+ * non-symlink.  Returns a negative errno on lookup/read failure. */
+static int installer_link_target(const char *path, char *buffer,
+                                 uint32_t capacity, int *is_link)
+{
+    struct stat status;
+    ssize_t length;
+    *is_link = 0;
+    if (!path || !buffer || capacity < 2U) return -EINVAL;
+    if (lstat(path, &status) < 0) return -errno;
+    if (!S_ISLNK(status.st_mode)) return 0;
+    length = readlink(path, buffer, capacity - 1U);
+    if (length < 0) return -errno;
+    buffer[length] = 0;
+    *is_link = 1;
+    return 0;
+}
+
 int installer_files_equal(const char *source, const char *target,
                           uint8_t *out_missing, uint8_t *out_diff)
 {
     uint8_t source_hash[INSTALLER_SHA256_HASH_LEN];
     uint8_t target_hash[INSTALLER_SHA256_HASH_LEN];
     struct leonos_stat source_st;
-    struct leonos_stat target_st;
+    struct stat target_st;
+    char source_target[LEONOS_FS_PATH_LEN];
+    char target_target[LEONOS_FS_PATH_LEN];
+    int source_is_link = 0;
+    int target_is_link = 0;
     int ret;
     if (out_missing) *out_missing = 0;
     if (out_diff) *out_diff = 1;
-    if (leonos_stat_legacy(source, &source_st) < 0 || source_st.type != LEONOS_FS_TYPE_FILE) return -2;
-    if (leonos_stat_legacy(target, &target_st) < 0 || target_st.type != LEONOS_FS_TYPE_FILE) {
+    ret = installer_link_target(source, source_target, sizeof(source_target),
+                                &source_is_link);
+    if (ret < 0) {
+        return ret == -ENOENT ? -2 : ret;
+    }
+    if (source_is_link) {
+        ret = installer_link_target(target, target_target, sizeof(target_target),
+                                    &target_is_link);
+        if (ret == -ENOENT) {
+            if (out_missing) *out_missing = 1;
+            return 0;
+        }
+        if (ret < 0) return ret;
+        if (!target_is_link || strcmp(source_target, target_target) != 0) {
+            return 0;
+        }
+        if (out_diff) *out_diff = 0;
+        return 0;
+    }
+    if (leonos_stat_legacy(source, &source_st) < 0 ||
+        source_st.type != LEONOS_FS_TYPE_FILE) {
+        return -2;
+    }
+    if (lstat(target, &target_st) < 0 || !S_ISREG(target_st.st_mode)) {
         if (out_missing) *out_missing = 1;
         return 0;
     }
@@ -183,7 +232,9 @@ int installer_files_equal(const char *source, const char *target,
     if (ret < 0) return ret;
     ret = installer_hash_file(target, target_hash);
     if (ret < 0) return ret;
-    if (!installer_hash_equal(source_hash, target_hash, INSTALLER_SHA256_HASH_LEN)) return 0;
+    if (!installer_hash_equal(source_hash, target_hash, INSTALLER_SHA256_HASH_LEN)) {
+        return 0;
+    }
     if (out_diff) *out_diff = 0;
     return 0;
 }

@@ -20,6 +20,7 @@ struct input_raw_event {
     uint8_t buttons;
     uint8_t keycode;
     uint8_t pressed;
+    uint8_t modifiers;
 };
 
 /**
@@ -38,6 +39,7 @@ void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons
  * @brief Enqueue a keyboard event: keycode is the key, pressed is 1 for down / 0 for up.
  */
 void input_push_key(uint8_t keycode, uint8_t pressed);
+uint8_t input_caps_lock_active(void);
 /**
  * @brief Dequeue the oldest event into event; returns non-zero when one was available.
  */
@@ -72,6 +74,9 @@ void input_evdev_key_state(void *buffer, uint32_t length);
  */
 void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
                               void *buffer, uint32_t length);
+struct input_absinfo;
+/** @brief Return the current pointer coordinate and framebuffer axis bounds. */
+int input_evdev_absinfo(uint32_t axis, struct input_absinfo *info);
 /**
  * @brief Return non-zero when the event device is currently present.
  */

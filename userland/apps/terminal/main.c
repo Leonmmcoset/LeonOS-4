@@ -7,6 +7,7 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 #include <pty.h>
+#include <errno.h>
 #include <stdio.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -633,6 +634,9 @@ static void terminal_move_down(uint32_t amount)
         amount = TERMINAL_HISTORY_ROWS - 1U;
     }
     uint32_t target = row + amount;
+    if (target >= TERMINAL_HISTORY_ROWS) {
+        target = TERMINAL_HISTORY_ROWS - 1U;
+    }
     while (target >= history_count) {
         terminal_append_line();
     }
@@ -956,11 +960,11 @@ static void terminal_put_char(char value)
         terminal_clear();
     } else if (value == '\t') {
         uint32_t next_stop;
+        uint32_t columns = terminal_columns();
         terminal_flush_utf8();
         next_stop = (cursor_column + 4U) & ~3U;
-        while (cursor_column < next_stop) {
-            terminal_put_codepoint(' ');
-        }
+        /* A tab moves the cursor without wrapping or erasing existing text. */
+        cursor_column = next_stop < columns ? next_stop : columns - 1U;
     } else if (byte >= 32U) {
         terminal_put_utf8_byte(byte);
     }
@@ -1145,7 +1149,6 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     struct termios termios;
     int have_termios;
     int local_echo;
-    leonos_ui_caps_lock_event(keycode, pressed);
     if (keycode == LEONOS_KEY_CAPS_LOCK) {
         return 0;
     }
@@ -1407,12 +1410,18 @@ static struct terminal_session *terminal_open_session(const char *path,
         .ws_col = (uint16_t)terminal_columns(),
     };
     child_pid = forkpty(&new_pty, 0, 0, &initial_winsize);
-    if (child_pid < 0 || new_pty < 0) {
-        return 0;
-    }
+    /* forkpty returns the master only to the parent; the child uses stdio. */
     if (child_pid == 0) {
         (void)execve(path, command_argv, command_envp);
+        fprintf(stderr, "terminal: exec %s failed errno=%d\n", path, errno);
         _exit(127);
+    }
+    if (child_pid < 0 || new_pty < 0) {
+        if (new_pty >= 0) {
+            (void)close(new_pty);
+        }
+        printf("terminal: PTY creation failed errno=%d\n", errno);
+        return 0;
     }
     {
         int flags = fcntl(new_pty, F_GETFL);
@@ -1470,11 +1479,13 @@ int main(int argc, char **argv, char **envp)
     char *shell_argv[4];
     char shell_prompt[] = "PS1=\\w \\$ ";
     char shell_term[] = "TERM=xterm";
-    char *shell_envp[] = { shell_prompt, shell_term, 0 };
+    char terminal_program[] = "TERM_PROGRAM=LeonOS Terminal";
+    char *terminal_envp[] = { shell_term, terminal_program, 0 };
+    char *shell_envp[] = { shell_prompt, shell_term, terminal_program, 0 };
     char **command_env_owned = 0;
     char *const *command_argv;
     char *const *command_envp;
-    char *const *environment_overrides = 0;
+    char *const *environment_overrides = terminal_envp;
     const char *command_path;
     uint8_t shift_down = 0;
     uint8_t ctrl_down = 0;
@@ -1488,8 +1499,8 @@ int main(int argc, char **argv, char **envp)
         command_argv = &argv[2];
         command_envp = 0;
     } else {
-        shell_argv[0] = (char *)leonos_launch_builtin_path("busybox");
-        shell_argv[1] = "sh";
+        shell_argv[0] = "/bin/sh";
+        shell_argv[1] = 0;
         shell_argv[2] = 0;
         shell_argv[3] = 0;
         command_path = shell_argv[0];
@@ -1581,8 +1592,9 @@ int main(int argc, char **argv, char **envp)
             }
         }
         if (redraw) {
-            leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
-                           TERMINAL_MAX_W);
+            if (ui.width != terminal_view_width || ui.height != terminal_view_height)
+                leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
+                               TERMINAL_MAX_W);
             terminal_draw(&ui);
             leonos_gui_present_window((uint32_t)window_id, terminal_view_width,
                                       terminal_view_height, TERMINAL_MAX_W, pixels);

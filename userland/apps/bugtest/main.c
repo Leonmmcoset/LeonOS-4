@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <pty.h>
 #include <unistd.h>
+#include <leonos/layout.h>
 
 #define BUGTEST_W 620
 #define BUGTEST_H 430
@@ -136,7 +137,7 @@ static int safe_open_bad_path(void)
 
 static int safe_stat_bad_out(void)
 {
-    return nonfatal_result(leonos_stat_legacy("/system/config/leonos.conf", (struct leonos_stat *)0x200000ULL));
+    return nonfatal_result(leonos_stat_legacy(LEONOS_PATH_LEONOS_CONF, (struct leonos_stat *)0x200000ULL));
 }
 
 static int safe_getcwd_bad_out(void)
@@ -148,7 +149,7 @@ static int safe_list_dir_bad_entries(void)
 {
     uint32_t count = 0;
     return nonfatal_result(leonos_list_dir(
-        "/programs", (struct leonos_dir_entry *)0x200000ULL, 4, &count));
+        LEONOS_LAYOUT_LEONOS_APPS, (struct leonos_dir_entry *)0x200000ULL, 4, &count));
 }
 
 static int safe_system_info_bad_out(void)

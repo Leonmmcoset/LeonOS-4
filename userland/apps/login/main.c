@@ -1,4 +1,5 @@
 #include <leonos/auth.h>
+#include <leonos/pam_session.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/text_input.h>
@@ -8,6 +9,11 @@
 #include <leonos/ui.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <errno.h>
 
 #define LOGIN_MAX_W 1920
 #define LOGIN_MAX_H 1080
@@ -26,7 +32,7 @@
 static uint32_t pixels[LOGIN_MAX_W * LOGIN_MAX_H];
 static uint32_t surface_w = LOGIN_INITIAL_W;
 static uint32_t surface_h = LOGIN_INITIAL_H;
-static struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
+static struct leonos_user_info *users;
 static uint32_t user_count;
 static uint32_t selected_user;
 static char password[LEONOS_AUTH_PASSWORD_LEN];
@@ -77,10 +83,10 @@ static void update_surface_size_from_framebuffer(void)
 static void refresh_users(void)
 {
     uint32_t count = 0;
-    if (leonos_auth_list_users(users, LEONOS_AUTH_MAX_USERS, 0, &count) < 0) {
+    if (leonos_auth_users_alloc(&users, 0, &count) < 0) {
         count = 0;
     }
-    user_count = count > LEONOS_AUTH_MAX_USERS ? LEONOS_AUTH_MAX_USERS : count;
+    user_count = count;
     if (selected_user >= user_count) {
         selected_user = user_count ? user_count - 1 : 0;
     }
@@ -117,10 +123,11 @@ static void draw_login(struct leonos_ui_surface *ui)
                        T("No enabled accounts", "没有可用账户"),
                        LEONOS_UI_DARK, LEONOS_UI_LIGHT);
     }
-    for (uint32_t i = 0; i < user_count && i < LOGIN_VISIBLE_USERS; ++i) {
-        uint32_t flags = i == selected_user ? LEONOS_UI_MENU_SELECTED : 0;
+    uint32_t first_user = (selected_user / LOGIN_VISIBLE_USERS) * LOGIN_VISIBLE_USERS;
+    for (uint32_t i = 0; first_user + i < user_count && i < LOGIN_VISIBLE_USERS; ++i) {
+        uint32_t flags = first_user + i == selected_user ? LEONOS_UI_MENU_SELECTED : 0;
         leonos_ui_list_row(ui, list_x, list_y + i * LOGIN_USER_ROW_H, list_w,
-                           users[i].username, flags);
+                           users[first_user + i].username, flags);
     }
     leonos_ui_text(ui, list_x, panel_y + 238, T("Password", "密码"),
                    LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
@@ -143,109 +150,38 @@ static int try_login(void)
         copy_text(status_text, sizeof(status_text), T("No account available", "没有可用账户"));
         return 0;
     }
-    if (!password[0]) {
-        copy_text(status_text, sizeof(status_text), T("Password required", "请输入密码"));
-        return 0;
-    }
-    if (leonos_auth_login(users[selected_user].username, password, &user) == 0) {
+    int result = leonos_pam_login(users[selected_user].username, password, &user);
+    explicit_bzero(password, sizeof(password));
+    if (result == 0) {
         copy_text(status_text, sizeof(status_text), T("Signed in", "已登录"));
         return 1;
     }
     password[0] = 0;
     leonos_ui_edit_state_init(&password_edit, password, sizeof(password));
-    copy_text(status_text, sizeof(status_text), T("Invalid password", "密码错误"));
+    copy_text(status_text, sizeof(status_text),
+              errno == EKEYEXPIRED ? T("Account expired", "账户已过期") :
+              errno == ECANCELED ? T("Authentication canceled", "认证已取消") :
+              errno == EACCES ? T("Authentication failed", "认证失败") :
+              T("Authentication service failed", "认证服务失败"));
     return 0;
-}
-
-static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
-                         uint8_t masked)
-{
-    uint32_t length = 0;
-    char input;
-    if (!buffer || capacity < 2U) {
-        return 0;
-    }
-    buffer[0] = 0;
-    if (prompt) {
-        write(1, prompt, strlen(prompt));
-    }
-    while (read(0, &input, 1) > 0) {
-        if (input == '\r') {
-            continue;
-        }
-        if (input == '\n') {
-            buffer[length] = 0;
-            /* Ordinary input is echoed by the terminal; secret input has
-             * ECHO disabled and needs an explicit line ending. */
-            if (masked) {
-                write(1, "\r\n", 2);
-            }
-            return 1;
-        }
-        if (input == '\b' || (uint8_t)input == 127U) {
-            if (length) {
-                --length;
-                write(1, "\b \b", 3);
-            }
-            continue;
-        }
-        if ((uint8_t)input >= 32U && length + 1U < capacity) {
-            buffer[length++] = input;
-            buffer[length] = 0;
-            if (masked) {
-                write(1, "*", 1);
-            }
-        }
-    }
-    return 0;
-}
-
-static int tty_read_secret(const char *prompt, char *buffer, uint32_t capacity)
-{
-    struct termios termios;
-    struct termios saved_termios;
-    int ret;
-
-    /* Login is a PTY child. The fd interface is available to it, unlike the
-     * owner-only PTY management interface. */
-    if (tcgetattr(0, &termios) != 0) {
-        return 0;
-    }
-    saved_termios = termios;
-    termios.c_lflag &= (tcflag_t)~(ECHO | ECHONL);
-    if (tcsetattr(0, TCSANOW, &termios) != 0) {
-        return 0;
-    }
-    ret = tty_read_line(prompt, buffer, capacity, 1);
-    (void)tcsetattr(0, TCSANOW, &saved_termios);
-    return ret;
 }
 
 static int tty_login_main(void)
 {
-    char username_input[LEONOS_AUTH_USERNAME_LEN];
-    char password_input[LEONOS_AUTH_PASSWORD_LEN];
-    struct leonos_user_info user;
-    puts("LeonOS login");
-    refresh_users();
-    if (!user_count) {
-        puts("No enabled accounts.");
+    if (leonos_session_initialize() < 0) { perror("Initialize accounts"); return 1; }
+    if ((getsid(0) != getpid() && setsid() < 0) ||
+        ioctl(STDIN_FILENO, TIOCSCTTY, 0) < 0 ||
+        tcsetpgrp(STDIN_FILENO, getpgrp()) < 0) {
+        perror("Initialize login terminal");
         return 1;
     }
-    for (;;) {
-        if (!tty_read_line("Username: ", username_input, sizeof(username_input), 0)) {
-            return 1;
-        }
-        if (!tty_read_secret("Password: ", password_input, sizeof(password_input))) {
-            puts("Secure password input is unavailable.");
-            return 1;
-        }
-        if (leonos_auth_login(username_input, password_input, &user) == 0) {
-            puts("Login successful.");
-            return 0;
-        }
-        puts("Login failed.");
-    }
+    struct stat installed;
+    if (lstat("/etc/leonos/installed", &installed) < 0 && errno == ENOENT)
+        execl("/bin/busybox", "sh", (char *)0);
+    else
+        execl("/bin/login", "login", (char *)0);
+    perror("Start login");
+    return 1;
 }
 
 int main(void)
@@ -305,6 +241,9 @@ int main(void)
                                                           event.pressed);
                 }
             }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                (void)leonos_ui_edit_state_handle_key(&password_edit, event.keycode, 0);
+            }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
                 uint32_t panel_w = surface_w > 620 ? 520 : surface_w > 48 ? surface_w - 40 : surface_w;
                 uint32_t panel_h = 360;
@@ -313,11 +252,12 @@ int main(void)
                 uint32_t list_x = panel_x + 24;
                 uint32_t list_y = panel_y + 112;
                 uint32_t list_w = panel_w - 48;
-                for (uint32_t i = 0; i < user_count && i < LOGIN_VISIBLE_USERS; ++i) {
+                uint32_t first_user = (selected_user / LOGIN_VISIBLE_USERS) * LOGIN_VISIBLE_USERS;
+                for (uint32_t i = 0; first_user + i < user_count && i < LOGIN_VISIBLE_USERS; ++i) {
                     if (hit_rect_i(event.x, event.y, (int32_t)list_x,
                                    (int32_t)(list_y + i * LOGIN_USER_ROW_H),
                                    (int32_t)list_w, (int32_t)LOGIN_USER_ROW_H)) {
-                        selected_user = i;
+                        selected_user = first_user + i;
                         password[0] = 0;
                         leonos_ui_edit_state_init(&password_edit, password, sizeof(password));
                     }
@@ -333,5 +273,6 @@ int main(void)
         }
     }
     leonos_gui_destroy_app_window((uint32_t)window_id);
-    return 0;
+    explicit_bzero(password, sizeof(password));
+    return leonos_pam_session_wait() < 0 ? 1 : 0;
 }

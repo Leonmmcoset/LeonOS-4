@@ -282,6 +282,15 @@ static uint32_t ioapic_read(const struct ioapic_info *io, uint8_t reg)
     return io->base[IOAPIC_WINDOW / 4u];
 }
 
+void apic_send_ipi(uint32_t destination, uint8_t vector)
+{
+    if (!local_apic_enabled || destination > 0xffu) return;
+    apic_wait_delivery();
+    lapic_write(APIC_REG_ICR_HIGH, destination << 24);
+    lapic_write(APIC_REG_ICR_LOW, APIC_DEST_PHYSICAL | vector);
+    apic_wait_delivery();
+}
+
 static void ioapic_write(const struct ioapic_info *io, uint8_t reg, uint32_t value)
 {
     if (!io || !io->base) return;

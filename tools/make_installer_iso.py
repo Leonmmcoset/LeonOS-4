@@ -49,18 +49,19 @@ def stage_installer_tree(
     middlelayer: Path,
     installer_root: Path,
     grub_font: Path,
+    grub_config: Path,
 ) -> None:
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
     copy_file(boot_efi, stage / "EFI/BOOT/BOOTX64.EFI")
-    copy_file(ROOT / "boot/grub/installer.cfg", stage / "grub/grub.cfg")
+    copy_file(grub_config, stage / "grub/grub.cfg")
     copy_file(grub_font, stage / "grub/fonts/leonos-unicode.pf2")
     copy_file(ROOT / "boot/grub/theme/theme.txt", stage / "grub/theme/theme.txt")
     (stage / "leonos-installer-iso.marker").write_text("LeonOS installer ISO volume\n", encoding="ascii")
     copy_file(loader, stage / "loader.elf")
-    copy_file(kernel, stage / "system/kernel.sys")
-    copy_file(middlelayer, stage / "system/middlelayer.sys")
+    copy_file(kernel, stage / "leonos/kernel.sys")
+    copy_file(middlelayer, stage / "leonos/middlelayer.sys")
     copy_file(installer_root, stage / "install/root.fat")
     copy_file(boot_image, stage / "boot/efiboot.img")
 
@@ -98,6 +99,8 @@ def main() -> int:
     parser.add_argument("--grub-font", default="build/generated/grub/leonos-unicode.pf2")
     parser.add_argument("--work-dir", default="build/install")
     parser.add_argument("--grub-efi-dir", default="/usr/lib/grub/x86_64-efi")
+    parser.add_argument("--grub-config", default="boot/grub/installer.cfg")
+    parser.add_argument("--bios", action="store_true", help="Also include the BIOS GRUB boot path")
     args = parser.parse_args()
 
     out = ROOT / args.out
@@ -119,7 +122,18 @@ def main() -> int:
 
     boot_efi = build_installer_boot_efi(work_dir / "installer-BOOTX64.EFI", grub_efi_dir)
     create_boot_image(boot_image, boot_efi, work_dir / "efi-boot")
-    stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer, installer_root, grub_font)
+    stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer,
+                         installer_root, grub_font, ROOT / args.grub_config)
+    if args.bios:
+        copy_file(ROOT / args.grub_config, stage / "boot/grub/grub.cfg")
+        bios_dir = Path("/usr/lib/grub/i386-pc")
+        core = work_dir / "bios-core.img"
+        run(["grub-mkimage", "-d", str(bios_dir), "-O", "i386-pc", "-p", "/boot/grub",
+             "-o", str(core), "biosdisk", "iso9660", "normal", "configfile", "multiboot2",
+             "search", "search_fs_file", "serial", "terminal", "all_video", "font", "gfxterm"])
+        # Keep the known EFI standalone image; the host grub-mkrescue EFI
+        # build may differ from the repository's validated GRUB modules.
+        (stage / "boot/grub/eltorito.img").write_bytes((bios_dir / "cdboot.img").read_bytes() + core.read_bytes())
     run([
         "xorriso",
         "-as",
@@ -130,6 +144,8 @@ def main() -> int:
         "-J",
         "-V",
         "LEONOS4INST",
+        *(("-b", "boot/grub/eltorito.img", "-no-emul-boot", "-boot-load-size", "4",
+           "-boot-info-table", "-eltorito-alt-boot") if args.bios else ()),
         "-e",
         "boot/efiboot.img",
         "-no-emul-boot",

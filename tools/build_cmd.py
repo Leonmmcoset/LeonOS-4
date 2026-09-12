@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+import musl_link
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -430,12 +431,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
-    parser.add_argument("--linker-script", type=Path, required=True)
+
     parser.add_argument("--leonos-lib", type=Path, required=True)
-    parser.add_argument("--picolibc-lib", type=Path, required=True)
+    parser.add_argument("--musl-lib", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
@@ -448,19 +449,26 @@ def main() -> None:
 
     source = args.source.resolve()
     port = args.port.resolve()
-    picolibc_prefix = args.picolibc_prefix.resolve()
+    musl_prefix = args.musl_prefix.resolve()
     leonos_libc_include = args.leonos_libc_include.resolve()
     leonos_include = args.leonos_include.resolve()
-    linker_script = args.linker_script.resolve()
+
     leonos_lib = args.leonos_lib.resolve()
-    picolibc_lib = args.picolibc_lib.resolve()
+    musl_lib = args.musl_lib.resolve()
     work_dir = args.work_dir.resolve()
     output = args.output.resolve()
     stamp = args.stamp.resolve()
     required = (
-        source / "cmain.c", source / "cparser.c", source / "LICENSE",
-        port / "leonos_cmd_shim.c", port / "README.md", picolibc_prefix / "include",
-        leonos_libc_include, leonos_include, linker_script, leonos_lib, picolibc_lib,
+        source / "cmain.c",
+        source / "cparser.c",
+        source / "LICENSE",
+        port / "leonos_cmd_shim.c",
+        port / "README.md",
+        musl_prefix / "include",
+        leonos_libc_include,
+        leonos_include,
+        leonos_lib,
+        musl_lib,
     )
     for path in required:
         if not path.exists():
@@ -477,14 +485,14 @@ def main() -> None:
 
     headers = clang_resource_headers()
     flags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=c99",
-        "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
-        "-mgeneral-regs-only", "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra",
-        "-Wno-unused-parameter", "-DLEONOS_USE_PICOLIBC", "-D_POSIX_C_SOURCE=200809L",
-        "-D_DEFAULT_SOURCE", "-Dstat=leonos_posix_stat", "-Dfstat=leonos_posix_fstat",
-        "-Dlstat=leonos_posix_lstat", "-nostdinc", "-isystem", str(headers),
-        "-I" + str(port / "include"), "-I" + str(picolibc_prefix / "include"),
-        "-I" + str(leonos_libc_include), "-I" + str(leonos_include),
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]), "-std=c99",
+        "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-pie",
+         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra",
+        "-Wno-unused-parameter", "-DLEONOS_USE_MUSL", "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL",
+        "-D_DEFAULT_SOURCE",
+         "-nostdinc", "-isystem", str(headers),
+        "-I" + str(port / "include"), "-I" + str(musl_prefix / "include"),
+        "-I" + str(leonos_libc_include), "-I" + str(leonos_include), "-I" + str(leonos_include / "uapi"),
         "-I" + str(work_source), "-I" + str(port),
     ]
 
@@ -501,11 +509,7 @@ def main() -> None:
     objects.append(shim_object)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag,
-        "-z", "max-page-size=0x1000", "-T", str(linker_script), "-o", str(output),
-        *map(str, objects), "--start-group", str(leonos_lib), str(picolibc_lib), "--end-group",
-    ])
+    run(musl_link.executable(musl_prefix, output, objects, (leonos_lib,), static=True, flags=args.linker_flag))
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps({
         "cmd_commit": source_revision(source),

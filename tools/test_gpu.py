@@ -17,7 +17,7 @@ class GpuAbiTests(unittest.TestCase):
                 subprocess.run([
                     "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-g",
                     "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                    "-Ikernel/ntclks/include", "-Iinclude",
+                    "-Ikernel/ntclks/include", "-Iinclude", "-Iinclude/uapi",
                     f"tools/tests/{name}_test.c", source, "-o", executable,
                 ], cwd=ROOT, check=True)
                 subprocess.run([executable], cwd=ROOT, check=True, timeout=30)

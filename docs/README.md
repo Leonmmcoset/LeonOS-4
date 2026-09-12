@@ -4,9 +4,14 @@ This directory tracks the architecture and operational notes that are useful
 when changing the kernel, loader, middlelayer, installer, or user ABI.
 
 - [ABI](ABI.md): syscall subset, device model, and middlelayer ABI.
+- [Linux ABI audit](LINUX_ABI_AUDIT_2026-09-07.md) and
+  [per-syscall status](LINUX_ABI_SYSCALLS_2026-09-07.csv): remaining compatibility work.
+- [musl migration](MUSL_MIGRATION_2026-09-08.md): runtime, SDK and binary compatibility.
+- [Unix permissions](POSIX_PERMISSIONS_2026-09-08.md): implemented contracts and verification.
+- [Timer validation](LINUX_ABI_TIMER_2026-09-09.md): timer and Vim evidence and remaining gaps.
 - [Syscalls](SYSCALLS.md): syscall entry convention, syscall table,
   `mmap`/`munmap`, process calls, and ioctl groups.
-- [Filesystem](FILESYSTEM.md): Unix-style root paths, mount policy, exFAT root plus ext2/FAT32/ISO 9660 support,
+- [Filesystem](FILESYSTEM.md): Unix-style root paths, ext2 default root plus exFAT/FAT32/ISO 9660 support,
   bundled `.hlp` help documents, and current limits.
 - [Drivers](DRIVERS.md): bootstrap drivers, loadable `.drv` modules, ABI, and
   management policy.

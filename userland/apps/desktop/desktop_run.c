@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include <stdlib.h>
 
 void init_desktop(void)
 {
@@ -99,25 +100,27 @@ void desktop_run(void)
     desktop_inputm_load_config();
     puts("[desktop.elf] Ring-3 desktop uses shadow framebuffer blit");
     desktop_service_daemon_update();
-    maybe_launch_oobe();
+    maybe_launch_login();
 
+    int profile = access("/etc/leonos/desktop-profile", F_OK) == 0;
+    unsigned long profile_start = leonos_uptime_ms();
+    unsigned long profile_frames = 0, profile_paint_ms = 0, profile_inputm_ms = 0;
     unsigned long last_log = 0;
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned long last_services_refresh = leonos_uptime_ms();
     unsigned long last_inputm_refresh = 0;
     unsigned long last_desktop_items_poll = 0;
-    unsigned idle_sleep_ms = 10;
     int last_mouse_visible = 1;
     for (;;) {
         struct leonos_gui_window_msg window_msg;
         int did_work = 0;
-        while (leonos_gui_poll_window(&window_msg) > 0) {
+        uint32_t window_budget = 64;
+        while (window_budget-- && leonos_gui_poll_window(&window_msg) > 0) {
             open_app_window_from_msg(&window_msg);
             did_work = 1;
         }
         desktop_handle_display_requests();
         desktop_handle_appearance_requests();
-        oobe_lock_update();
         login_lock_update();
         desktop_update_window_animations();
 
@@ -160,7 +163,6 @@ void desktop_run(void)
                 handle_mouse_wheel((uint32_t)event.x, (uint32_t)event.y,
                                    event.dy, event.buttons);
             } else if (event.type == LEONOS_INPUT_KEYBOARD) {
-                leonos_ui_caps_lock_event(event.keycode, event.pressed);
                 if (desktop_handle_shortcut_input_key(event.keycode, event.pressed)) {
                     continue;
                 }
@@ -184,7 +186,6 @@ void desktop_run(void)
                                    event.pressed ? 7u : 8u,
                                    0, 0, 0, 0, 0, event.keycode, event.pressed);
                 }
-                printf("[desktop.elf] key scancode=%x pressed=%d\n", event.keycode, event.pressed);
             }
         }
         if (have_deferred_motion) {
@@ -204,16 +205,24 @@ void desktop_run(void)
                 did_work = 1;
             }
         }
+        unsigned long paint_start = profile ? leonos_uptime_ms() : 0;
+        int painted = full_redraw_pending || desktop_damage_pending;
         if (full_redraw_pending) {
             redraw_all();
             did_work = 1;
         } else if (desktop_damage_pending) {
             struct rect damage = desktop_damage_rect;
+            int cursor_only = desktop_damage_cursor_only;
             desktop_damage_pending = 0;
             desktop_damage_cursor_only = 0;
             desktop_damage_rect = rect_make(0, 0, 0, 0);
-            repaint_and_flush(damage);
+            if (cursor_only) repaint_cursor_and_flush(damage);
+            else repaint_and_flush(damage);
             did_work = 1;
+        }
+        if (profile && painted) {
+            ++profile_frames;
+            profile_paint_ms += leonos_uptime_ms() - paint_start;
         }
         int mouse_visible = leonos_gui_mouse_visible();
         if (mouse_visible != last_mouse_visible) {
@@ -223,6 +232,7 @@ void desktop_run(void)
         }
 
         unsigned long now = leonos_uptime_ms();
+        desktop_poll_network_state();
         if (!wallpaper_loaded && now >= wallpaper_retry_ms) {
             if (load_wallpaper_bmp()) {
                 full_redraw_pending = 1;
@@ -286,7 +296,15 @@ void desktop_run(void)
         }
         if (now - last_inputm_refresh >= 100UL) {
             last_inputm_refresh = now;
+            unsigned long inputm_start = profile ? leonos_uptime_ms() : 0;
             desktop_inputm_refresh();
+            if (profile) profile_inputm_ms += leonos_uptime_ms() - inputm_start;
+        }
+        if (profile && now - profile_start >= 5000UL) {
+            printf("[desktop-perf] frames=%lu elapsed_ms=%lu paint_ms=%lu inputm_ms=%lu\n",
+                   profile_frames, now - profile_start, profile_paint_ms, profile_inputm_ms);
+            profile_start = now;
+            profile_frames = profile_paint_ms = profile_inputm_ms = 0;
         }
         if (now - last_log >= 5000) {
             puts("[desktop.elf] window server alive");
@@ -294,12 +312,8 @@ void desktop_run(void)
         }
         desktop_update_display_confirmation();
         if (did_work) {
-            idle_sleep_ms = 10;
             continue;
         }
-        sleep_ms(idle_sleep_ms);
-        if (idle_sleep_ms < 50) {
-            idle_sleep_ms += 10;
-        }
+        (void)leonos_gui_wait_policy(50);
     }
 }

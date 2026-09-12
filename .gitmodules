@@ -4,9 +4,6 @@
 [submodule "third_party/mbedtls"]
 	path = third_party/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
-[submodule "third_party/picolibc"]
-	path = third_party/picolibc
-	url = https://github.com/Leonmmcoset/LeonOS-4-picolibc.git
 [submodule "third_party/busybox"]
 	path = third_party/busybox
 	url = https://github.com/mirror/busybox.git
@@ -40,9 +37,6 @@
 [submodule "third_party/cmd"]
 	path = third_party/cmd
 	url = https://github.com/ChenPi11/cmd.git
-[submodule "third_party/fastfetch"]
-	path = third_party/fastfetch
-	url = https://github.com/fastfetch-cli/fastfetch.git
 [submodule "third_party/sqlite"]
 	path = third_party/sqlite
 	url = https://github.com/sqlite/sqlite.git
@@ -55,3 +49,15 @@
 [submodule "third_party/portablegl"]
 	path = third_party/portablegl
 	url = https://github.com/rswinkle/PortableGL.git
+[submodule "third_party/musl"]
+	path = third_party/musl
+	url = https://git.musl-libc.org/git/musl
+[submodule "third_party/mimalloc"]
+	path = third_party/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
+[submodule "third_party/vim"]
+	path = third_party/vim
+	url = https://github.com/vim/vim.git
+[submodule "third_party/ncurses"]
+	path = third_party/ncurses
+	url = https://github.com/ThomasDickey/ncurses-snapshots.git

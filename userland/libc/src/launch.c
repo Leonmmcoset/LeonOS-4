@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include <leonos/fs.h>
 #include <leonos/app.h>
 #include <leonos/device.h>
@@ -9,13 +10,17 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <unistd.h>
+#include <leonos/layout.h>
+#include <grp.h>
+#include <pwd.h>
+#include <sys/stat.h>
+#include <stdlib.h>
 
-#define LEONOS_ASSOC_CONFIG_PATH "/system/config/fileassoc.cfg"
+#define LEONOS_ASSOC_CONFIG_PATH LEONOS_PATH_FILEASSOC_CFG
 #define LEONOS_ASSOC_CONFIG_MAX 1024U
 #define LEONOS_SHORTCUT_MAX_BYTES 384U
 #define LEONOS_SHORTCUT_MAX_DEPTH 8U
-#define LEONOS_TERMINAL_APP_PATH "/system/apps/terminal/terminal.elf"
+#define LEONOS_TERMINAL_APP_PATH LEONOS_LAYOUT_LEONOS_APPS "/terminal/terminal.elf"
 
 static int launch_fail(int code)
 {
@@ -145,7 +150,7 @@ static int ends_with_ignore_case(const char *text, const char *suffix)
 
 static int is_system_desktop_path(const char *path)
 {
-    return text_eq_ignore_case(path, "/system/apps/desktop/desktop.elf");
+    return text_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/desktop/desktop.elf");
 }
 
 static const char *path_basename(const char *path)
@@ -212,47 +217,28 @@ static int launch_in_terminal(char *argv[])
     return leonos_spawn_argv(terminal_argv[0], terminal_argv);
 }
 
-static void launch_apply_session_uid(void)
-{
-    char text[16] = {0};
-    int fd;
-    uint32_t uid = 0;
-    if (getuid() != 0) return;
-    fd = open("/run/leonos/session-user", LEONOS_O_RDONLY, 0);
-    if (fd < 0) return;
-    (void)read(fd, text, sizeof(text) - 1u);
-    close(fd);
-    for (uint32_t i = 0; text[i] >= '0' && text[i] <= '9'; ++i) {
-        uid = uid * 10u + (uint32_t)(text[i] - '0');
-    }
-    if (uid) {
-        (void)setgid(uid);
-        (void)setuid(uid);
-    }
-}
+static int launch_session;
+void leonos_launch_use_session(int enabled) { launch_session = !!enabled; }
 
 int leonos_spawn_argv(const char *path, char *const argv[])
 {
-    char **envp = 0;
-    pid_t pid;
-    int result;
-
-    if (!path || !path[0] || !argv || !argv[0]) {
+    if (!path || !path[0] || !argv || !argv[0])
         return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
-    }
-    result = leonos_environment_build(0, &envp);
-    if (result < 0) {
-        return result;
-    }
-    pid = fork();
+    pid_t pid = fork();
     if (pid == 0) {
-        launch_apply_session_uid();
-        (void)execve(path, argv, envp);
+        char **envp = NULL;
+        if (launch_session && getuid() == 0 &&
+            strcmp(path, LEONOS_LAYOUT_LEONOS_APPS "/login/login.elf")) {
+            struct stat installed;
+            int present = lstat("/etc/leonos/installed", &installed);
+            if ((present < 0 && errno != ENOENT) ||
+                (present == 0 && leonos_session_apply() < 0)) _exit(126);
+        }
+        if (leonos_environment_build(NULL, &envp) < 0) _exit(126);
+        execve(path, argv, envp);
         _exit(127);
     }
-    result = pid < 0 ? -1 : (int)pid;
-    leonos_environment_free(envp);
-    return result;
+    return pid < 0 ? -1 : (int)pid;
 }
 
 static void build_child_path(char *dst, uint32_t capacity,
@@ -282,19 +268,35 @@ static void build_cat_command(char *dst, uint32_t capacity, const char *path)
     append_char(dst, &pos, capacity, '"');
 }
 
+static void append_shortcut_base(char *dst, uint32_t *pos, uint32_t capacity,
+                                 const char *target_path)
+{
+    const char *base = path_basename(target_path);
+    uint32_t base_len = text_len(base);
+    if (!base || !base[0]) {
+        base = "Shortcut";
+        base_len = text_len(base);
+    } else if (ends_with_ignore_case(base, ".elf")) {
+        base_len -= 4U;
+    }
+    if (!base_len) {
+        base = "Shortcut";
+        base_len = text_len(base);
+    }
+    for (uint32_t i = 0; i < base_len; ++i) {
+        append_char(dst, pos, capacity, base[i]);
+    }
+}
+
 void leonos_launch_default_shortcut_name(const char *target_path, char *buffer,
                                          uint32_t capacity)
 {
     uint32_t pos = 0;
-    const char *base = path_basename(target_path);
     if (!buffer || capacity == 0) {
         return;
     }
     buffer[0] = 0;
-    if (!base || !base[0]) {
-        base = "Shortcut";
-    }
-    append_text(buffer, &pos, capacity, base);
+    append_shortcut_base(buffer, &pos, capacity, target_path);
     if (!ends_with_ignore_case(buffer, ".lnk")) {
         append_text(buffer, &pos, capacity, ".lnk");
     }
@@ -304,15 +306,11 @@ static void build_numbered_shortcut_name(char *dst, uint32_t capacity,
                                          const char *target_path, uint32_t number)
 {
     uint32_t pos = 0;
-    const char *base = path_basename(target_path);
     if (!dst || capacity == 0) {
         return;
     }
     dst[0] = 0;
-    if (!base || !base[0]) {
-        base = "Shortcut";
-    }
-    append_text(dst, &pos, capacity, base);
+    append_shortcut_base(dst, &pos, capacity, target_path);
     append_char(dst, &pos, capacity, ' ');
     if (number >= 10) {
         append_char(dst, &pos, capacity, (char)('0' + (number / 10) % 10));
@@ -345,7 +343,7 @@ int leonos_launch_create_shortcut(const char *shortcut_path, const char *target_
     append_text(body, &pos, sizeof(body), "target=");
     append_text(body, &pos, sizeof(body), target_path);
     append_char(body, &pos, sizeof(body), '\n');
-    fd = open(shortcut_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(shortcut_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -477,7 +475,7 @@ static int read_assoc_config(char *buffer, uint32_t capacity, uint32_t *out_len)
 static int write_assoc_config(const char *buffer, uint32_t len)
 {
     int fd = open(LEONOS_ASSOC_CONFIG_PATH,
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }

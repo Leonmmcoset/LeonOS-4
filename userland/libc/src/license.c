@@ -5,8 +5,9 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
+#include <leonos/layout.h>
 
-#define LICENSE_PATH "/system/state/license.dat"
+#define LICENSE_PATH LEONOS_PATH_LICENSE
 #define OFFLINE_ALPHABET "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #define LOCAL_SECRET "LeonOS4 local activation"
 #define OFFLINE_SECRET "LeonOS4 offline license v1"
@@ -497,7 +498,7 @@ static int read_file_text(const char *path, char *out, uint32_t cap)
 
 static int write_file_text(const char *path, const char *text)
 {
-    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     uint32_t len = (uint32_t)strlen(text);
     long wrote;
     if (fd < 0) {

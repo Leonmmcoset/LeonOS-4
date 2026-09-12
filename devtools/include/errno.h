@@ -1,75 +1,27 @@
-/*
-Copyright (c) 1991, 1993
-The Regents of the University of California.  All rights reserved.
-All or some portions of this file are derived from material licensed
-to the University of California by American Telephone and Telegraph
-Co. or Unix System Laboratories, Inc. and are reproduced herein with
-the permission of UNIX System Laboratories, Inc.
+#ifndef	_ERRNO_H
+#define _ERRNO_H
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-1. Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-3. Neither the name of the University nor the names of its contributors
-may be used to endorse or promote products derived from this software
-without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGE.
- */
-#ifndef __ERRNO_H__
-#define __ERRNO_H__
-
-#include <sys/cdefs.h>
-
-#if __STDC_WANT_LIB_EXT1__ == 1
-#ifndef __STDC_LIB_EXT1__
-#define __STDC_LIB_EXT1__ 1
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#include <sys/_types.h>
+#include <features.h>
 
-#ifndef _ERRNO_T_DEFINED
-typedef __errno_t errno_t;
-#define _ERRNO_T_DEFINED
+#include <bits/errno.h>
+
+#ifdef __GNUC__
+__attribute__((const))
 #endif
-#endif
+int *__errno_location(void);
+#define errno (*__errno_location())
 
-_BEGIN_STD_C
-
-#if __GNU_VISIBLE
-char *_user_strerror(int errnum, int internal, int *errptr) __picolibc_export;
-#endif
-
-#ifdef __GLOBAL_ERRNO
-#define __THREAD_LOCAL_ERRNO
-#else
-#define __THREAD_LOCAL_ERRNO __THREAD_LOCAL
+#ifdef _GNU_SOURCE
+extern char *program_invocation_short_name, *program_invocation_name;
 #endif
 
-#ifdef __PICOLIBC_ERRNO_FUNCTION
-int *__PICOLIBC_ERRNO_FUNCTION(void) __picolibc_export;
-#define errno (*__PICOLIBC_ERRNO_FUNCTION())
-#else
-extern __picolibc_export __THREAD_LOCAL_ERRNO int errno;
-#define errno errno
+#ifdef __cplusplus
+}
 #endif
 
-#include <sys/errno.h>
+#endif
 
-_END_STD_C
-
-#endif /* !__ERRNO_H__ */

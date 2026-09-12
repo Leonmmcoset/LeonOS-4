@@ -108,7 +108,6 @@ int task_shm_truncate(struct task_file *file, uint64_t size)
     uint32_t pages;
     uint64_t physical;
     if (!file || !(file->flags & TASK_FILE_FLAG_DEV_SHM)) return -LEONOS_EBADF;
-    if (!size) size = TASK_SHM_PAGE;
     if (size > TASK_SHM_MAX_BYTES) return -LEONOS_EINVAL;
     segment = (struct task_shm *)kernel_object_lookup(kernel_objects(),
                                                       (uint32_t)file->aux,
@@ -120,8 +119,8 @@ int task_shm_truncate(struct task_file *file, uint64_t size)
         file->node.size = size;
         return 0;
     }
-    physical = mm_alloc_pages(pages);
-    if (!physical) return -LEONOS_ENOMEM;
+    physical = pages ? mm_alloc_pages(pages) : 0;
+    if (pages && !physical) return -LEONOS_ENOMEM;
     if (segment->physical && segment->pages) {
         uint32_t copy_pages = segment->pages < pages ? segment->pages : pages;
         for (uint32_t i = 0; i < copy_pages * (uint32_t)(TASK_SHM_PAGE / sizeof(uint32_t)); ++i) {
@@ -137,6 +136,45 @@ int task_shm_truncate(struct task_file *file, uint64_t size)
     return 0;
 }
 
+int task_shm_read(struct task_file *file, void *buffer, uint32_t length)
+{
+    struct task_shm *segment;
+    uint64_t capacity;
+    if (!file || !(file->flags & TASK_FILE_FLAG_DEV_SHM)) return -LEONOS_EBADF;
+    if (length && !buffer) return -LEONOS_EFAULT;
+    segment = (struct task_shm *)kernel_object_lookup(kernel_objects(),
+                                                      (uint32_t)file->aux,
+                                                      KERNEL_OBJECT_DEVICE);
+    if (!segment) return -LEONOS_EBADF;
+    capacity = segment->bytes;
+    if (file->offset >= capacity) return 0;
+    if ((uint64_t)length > capacity - file->offset)
+        length = (uint32_t)(capacity - file->offset);
+    if (length) __builtin_memcpy(buffer, (const void *)(uintptr_t)(segment->physical + file->offset), length);
+    file->offset += length;
+    return (int)length;
+}
+
+int task_shm_write(struct task_file *file, const void *buffer, uint32_t length)
+{
+    struct task_shm *segment;
+    uint64_t capacity;
+    if (!file || !(file->flags & TASK_FILE_FLAG_DEV_SHM)) return -LEONOS_EBADF;
+    if (length && !buffer) return -LEONOS_EFAULT;
+    segment = (struct task_shm *)kernel_object_lookup(kernel_objects(),
+                                                      (uint32_t)file->aux,
+                                                      KERNEL_OBJECT_DEVICE);
+    if (!segment) return -LEONOS_EBADF;
+    capacity = segment->bytes;
+    if (!length) return 0;
+    if (file->offset >= capacity) return -LEONOS_ENOSPC;
+    if ((uint64_t)length > capacity - file->offset)
+        length = (uint32_t)(capacity - file->offset);
+    if (length) __builtin_memcpy((void *)(uintptr_t)(segment->physical + file->offset), buffer, length);
+    file->offset += length;
+    return (int)length;
+}
+
 int task_shm_map(const struct task_file *file, uint64_t offset, uint64_t length,
                  uint64_t *physical)
 {
@@ -148,8 +186,13 @@ int task_shm_map(const struct task_file *file, uint64_t offset, uint64_t length,
                                                       (uint32_t)file->aux,
                                                       KERNEL_OBJECT_DEVICE);
     if (!segment || !segment->physical) return -LEONOS_EBADF;
-    if (offset > segment->bytes || length > segment->bytes - offset) {
-        return -LEONOS_EINVAL;
+    /* mmap lengths are page-rounded up by the mmap entry path, so the bound
+     * must be the page-backed allocation, not the exact logical size. */
+    {
+        uint64_t capacity = (uint64_t)segment->pages * TASK_SHM_PAGE;
+        if (offset > capacity || length > capacity - offset) {
+            return -LEONOS_EINVAL;
+        }
     }
     *physical = segment->physical + offset;
     return 0;

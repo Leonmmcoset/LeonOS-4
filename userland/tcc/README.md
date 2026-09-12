@@ -13,33 +13,30 @@ tcc hello.c -o hello.elf
 The installed `examples/hello.c` provides a small end-to-end check:
 
 ```text
-cd /programs/tcc
-tcc examples/hello.c -o hello.elf
-/programs/tcc/hello.elf
+tcc /opt/tcc/examples/hello.c -o /tmp/hello.elf
+/tmp/hello.elf
 ```
 
 It automatically uses the headers and static runtime in
-`/programs/tcc/`.  Generated executables use LeonOS's existing `_start`,
-`libleonos.a`, the unmodified Picolibc headers/library, and the separate
+`/opt/tcc/`.  Generated executables use musl's `crt1.o`, `crti.o`, `crtn.o`, mimalloc,
+`libleonos.a`, the unmodified musl headers/library, and the separate
 LeonOS target runtime archive `libleonos-tcc-rt.a` plus TinyCC's compiler
 runtime `libtcc1.a`.
 
-The Picolibc headers are copied as supplied by Picolibc.  LeonOS-specific
+The musl headers are copied as supplied by musl.  LeonOS-specific
 predefined ABI macros are provided by TinyCC's target layer (`__leonos__`,
 LP64 widths, and related compiler definitions), rather than by rewriting
-Picolibc private headers during the build.
+musl private headers during the build.
 
 ## Deliberately unavailable
 
 - Dynamic libraries, PIE and shared-library output.
 - `tcc -run` / in-memory JIT execution.
 - Host/Linux headers and libraries.
-- `times()` in generated programs; LeonOS does not yet expose process CPU-time
-  accounting, so the target-runtime stub returns `ENOSYS`. `signal()` is
-  supplied by `libleonos` and supports `SIG_DFL`/`SIG_IGN`; user-installed
-  handlers remain unsupported and return `SIG_ERR` with `errno = ENOSYS`.
+- Complete Linux syscall coverage: standard functions use musl and the real
+  kernel interfaces. Consult the Linux ABI ledger for outstanding behavior;
+  there is no separate target-runtime POSIX emulation.
 
 Paths accepted by the compiler use Unix syntax, such as
-`/programs/demo/main.c`. For multiple `C_INCLUDE_PATH`, `CPATH` or
-`LIBRARY_PATH` entries, use a semicolon (`;`); `:` is rejected in LeonOS
-paths.
+`/opt/demo/main.c`. For multiple `C_INCLUDE_PATH`, `CPATH` or
+`LIBRARY_PATH` entries, use a colon (`:`), matching the target compiler configuration.

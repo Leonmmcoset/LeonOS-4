@@ -6,10 +6,11 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <string.h>
+#include <leonos/layout.h>
 
 #define OSCHINPT_ID "oschinpt"
-#define OSCHINPT_DICT_PATH "/programs/oschinpt/pinyin_simp.dict.yaml"
-#define OSCHINPT_DICT_INDEX_PATH "/programs/oschinpt/oscp.idx"
+#define OSCHINPT_DICT_PATH LEONOS_LAYOUT_LEONOS_APPS "/oschinpt/pinyin_simp.dict.yaml"
+#define OSCHINPT_DICT_INDEX_PATH LEONOS_LAYOUT_LEONOS_APPS "/oschinpt/oscp.idx"
 #define OSCHINPT_DICT_URL "https://raw.githubusercontent.com/rime/rime-pinyin-simp/master/pinyin_simp.dict.yaml"
 #define OSCHINPT_CONFIG_NAME ".inputm.conf"
 #define OSCHINPT_LEARN_NAME ".oschinpt.learn"
@@ -291,7 +292,7 @@ static void save_learning(const char *code, const char *word)
         line[pos++] = '\n';
     }
     line[pos] = 0;
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0666);
     if (fd >= 0) {
         (void)write(fd, line, pos);
         close(fd);
@@ -638,7 +639,7 @@ static int dictionary_index_build(void)
     header.count = dictionary_index_count;
     header.dictionary_size = (uint32_t)dictionary_stat.size;
     index_fd = open(OSCHINPT_DICT_INDEX_PATH,
-                    LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                    LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (index_fd < 0 || !dictionary_write_exact(index_fd, &header, sizeof(header)) ||
         !dictionary_write_exact(index_fd, dictionary_index,
                                 dictionary_index_count * sizeof(dictionary_index[0]))) {

@@ -17,4 +17,13 @@ void platform_identity_init(const struct boot_info *boot);
  */
 void platform_machine_identity(struct leonos_machine_identity *identity);
 
+#define PLATFORM_DMI_FIELDS 15u
+struct platform_dmi_info {
+    /* bios vendor/version/date; system vendor/name/version/serial/uuid/sku/family;
+     * board vendor/name/version/serial; chassis vendor. Empty means unavailable. */
+    char values[PLATFORM_DMI_FIELDS][128];
+};
+/** @brief Return cached, validated SMBIOS strings; unavailable fields are empty. */
+const struct platform_dmi_info *platform_dmi(void);
+
 #endif

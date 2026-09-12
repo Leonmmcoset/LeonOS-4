@@ -6,6 +6,7 @@
 #include <leonos/ui.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <leonos/layout.h>
 
 #define XIAOBAI_W 760U
 #define XIAOBAI_H 760U
@@ -37,7 +38,7 @@ static int change_to_executable_directory(const char *path)
     uint32_t last_separator = 0;
 
     if (!path || !path[0]) {
-        return chdir("/programs/xiaobai");
+        return chdir(LEONOS_LAYOUT_LEONOS_APPS "/xiaobai");
     }
     while (path[length]) {
         if (path[length] == '/') {
@@ -46,7 +47,7 @@ static int change_to_executable_directory(const char *path)
         ++length;
     }
     if (last_separator == 0 || last_separator >= sizeof(directory)) {
-        return chdir("/programs/xiaobai");
+        return chdir(LEONOS_LAYOUT_LEONOS_APPS "/xiaobai");
     }
     copy_text(directory, sizeof(directory), path);
     directory[last_separator] = 0;

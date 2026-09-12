@@ -2,6 +2,7 @@
 #define LEONOS_GUI_H
 
 #include <stdint.h>
+#include <leonos/fb.h>
 #include <leonos/fs.h>
 
 
@@ -9,11 +10,6 @@
 #define LEONOS_DISPLAY_REQUEST_KEEP 2U
 #define LEONOS_DISPLAY_REQUEST_REVERT 3U
 #define LEONOS_DISPLAY_REQUEST_REFRESH 4U
-
-#define LEONOS_FB_CAP_MODE_SET 0x0001U
-#define LEONOS_FB_BACKEND_BOOT 0U
-#define LEONOS_FB_BACKEND_BOCHS_VBE 1U
-#define LEONOS_FB_BACKEND_VMWARE_SVGA 2U
 
 #define LEONOS_WALLPAPER_MODE_FILL 0U
 #define LEONOS_WALLPAPER_MODE_FIT 1U
@@ -29,14 +25,27 @@
 #define LEONOS_INPUT_KEYBOARD 2U
 #define LEONOS_INPUT_MOUSE_WHEEL 3U
 
+#define LEONOS_KEY_ESCAPE 1U
 #define LEONOS_KEY_BACKSPACE 14U
 #define LEONOS_KEY_TAB 15U
 #define LEONOS_KEY_ENTER 28U
+#define LEONOS_KEY_LEFT_CTRL 29U
 #define LEONOS_KEY_LEFT_SHIFT 42U
 #define LEONOS_KEY_RIGHT_SHIFT 54U
 #define LEONOS_KEY_LEFT_ALT 56U
 #define LEONOS_KEY_SPACE 57U
 #define LEONOS_KEY_CAPS_LOCK 58U
+#define LEONOS_INPUT_MOD_CAPS_LOCK 0x01U
+#define LEONOS_KEY_HOME 71U
+#define LEONOS_KEY_UP 72U
+#define LEONOS_KEY_PAGE_UP 73U
+#define LEONOS_KEY_LEFT 75U
+#define LEONOS_KEY_RIGHT 77U
+#define LEONOS_KEY_END 79U
+#define LEONOS_KEY_DOWN 80U
+#define LEONOS_KEY_PAGE_DOWN 81U
+#define LEONOS_KEY_INSERT 82U
+#define LEONOS_KEY_DELETE 83U
 #define LEONOS_KEY_F12 88U
 #define LEONOS_KEY_LEFT_WIN 112U
 #define LEONOS_KEY_RIGHT_WIN 113U
@@ -55,6 +64,10 @@
 #define LEONOS_GUI_APP_EVENT_MOUSE_WHEEL 9U
 #define LEONOS_GUI_APP_EVENT_THEME_CHANGED 10U
 #define LEONOS_GUI_IDLE_WAIT_MS 100U
+
+/* Keep resizable application surfaces aligned with the window-server limit. */
+#define LEONOS_GUI_MAX_WINDOW_WIDTH 1920U
+#define LEONOS_GUI_MAX_WINDOW_HEIGHT 1080U
 
 #define LEONOS_GUI_WINDOW_NO_RESIZE 0x00000001U
 #define LEONOS_GUI_WINDOW_FULLSCREEN 0x00000002U
@@ -113,6 +126,7 @@ struct leonos_input_event {
     uint8_t buttons;
     uint8_t keycode;
     uint8_t pressed;
+    uint8_t modifiers;
 };
 
 struct leonos_fb_info {
@@ -120,16 +134,6 @@ struct leonos_fb_info {
     uint32_t height;
     uint32_t pitch;
     uint8_t bpp;
-};
-
-struct leonos_fb_capabilities {
-    uint8_t bytes_per_pixel;
-    uint8_t reserved;
-    uint16_t capabilities;
-    uint32_t max_width;
-    uint32_t max_height;
-    uint32_t max_bytes;
-    uint32_t backend;
 };
 
 struct leonos_fb_mode {
@@ -260,7 +264,7 @@ struct leonos_gui_app_event {
     uint8_t buttons;
     uint8_t keycode;
     uint8_t pressed;
-    uint8_t reserved;
+    uint8_t modifiers;
 };
 
 struct leonos_gui_wait_app_event {
@@ -333,6 +337,7 @@ struct leonos_appearance_request {
 };
 
 int leonos_gui_connect(void);
+int leonos_gui_policy_connect(void);
 int leonos_gui_create_window(const struct leonos_gui_window *window);
 int leonos_gui_next_event(struct leonos_input_event *event);
 unsigned long leonos_uptime_ms(void);
@@ -353,6 +358,8 @@ int leonos_gui_set_window_borderless(uint32_t window_id, uint32_t borderless);
 int leonos_gui_set_window_taskbar_visible(uint32_t window_id, uint32_t visible);
 int leonos_gui_set_taskbar_visible(uint32_t window_id, uint32_t visible);
 int leonos_gui_poll_window(struct leonos_gui_window_msg *message);
+/* Wait for policy messages/input without consuming queued events. */
+int leonos_gui_wait_policy(uint32_t timeout_ms);
 int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t height,
                               uint32_t stride, const uint32_t *pixels);
 int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_t capacity_height,
@@ -363,6 +370,10 @@ int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeo
 int leonos_gui_send_app_event(const struct leonos_gui_app_event *event);
 int leonos_gui_set_mouse_visible(uint32_t window_id, uint32_t visible);
 int leonos_gui_mouse_visible(void);
+int leonos_gui_cursor_request(const struct leonos_gui_cursor_request *request);
+int leonos_gui_set_cursor_position(uint32_t window_id, int32_t x, int32_t y);
+int leonos_gui_set_cursor_style(uint32_t window_id, uint32_t style);
+int leonos_gui_set_cursor_auto(uint32_t window_id);
 int leonos_mouse_get_state(struct leonos_mouse_state *state);
 int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint64_t *tick);
 int leonos_task_kill(uint32_t pid);

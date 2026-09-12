@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+import musl_link
 
 
 SQLITE_VERSION = "3.46.1"
@@ -33,13 +34,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
-    parser.add_argument("--dynamic-linker-script", type=Path, required=True)
+
     parser.add_argument("--runtime-so", type=Path, required=True)
-    parser.add_argument("--dynamic-crt", type=Path, required=True)
-    parser.add_argument("--abi-note", type=Path, required=True)
+
+
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--static-library", type=Path, required=True)
     parser.add_argument("--header", type=Path, required=True)
@@ -54,9 +55,7 @@ def main() -> None:
     source = args.source.resolve()
     port = args.port.resolve()
     work = args.work_dir.resolve()
-    for required in (source / "src", source / "main.mk", source / "Makefile.linux-gcc",
-                     port / "leonos_sqlite_vfs.c", args.picolibc_prefix / "include",
-                     args.runtime_so, args.dynamic_crt, args.abi_note):
+    for required in (source / "src", source / "main.mk", source / "Makefile.linux-gcc", port / "leonos_sqlite_vfs.c", args.musl_prefix / "include", args.runtime_so,):
         if not required.exists():
             raise SystemExit(f"required SQLite build input is missing: {required}")
     revision = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"],
@@ -93,12 +92,12 @@ def main() -> None:
     objects = work / "objects"
     objects.mkdir()
     flags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]),
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]),
         "-std=gnu11", "-ffreestanding", "-fno-stack-protector", "-fPIC",
-        "-mno-red-zone", "-ffunction-sections", "-fdata-sections", "-Wall",
+         "-ffunction-sections", "-fdata-sections", "-Wall",
         "-Wextra", "-Wno-unused-parameter", "-nostdinc", "-isystem", str(resource_headers()),
-        "-I", str(args.picolibc_prefix / "include"), "-I", str(args.leonos_libc_include),
-        "-I", str(args.leonos_include), "-I", str(generated),
+        "-I", str(args.musl_prefix / "include"), "-I", str(args.leonos_libc_include),
+        "-I", str(args.leonos_include), "-I", str(args.leonos_include / "uapi"), "-I", str(generated),
         "-DSQLITE_OS_OTHER=1", "-DSQLITE_THREADSAFE=0", "-DSQLITE_OMIT_LOAD_EXTENSION=1",
         "-DSQLITE_OMIT_WAL=1", "-DSQLITE_DEFAULT_MEMSTATUS=0", "-DSQLITE_MAX_MMAP_SIZE=0",
     ]
@@ -112,10 +111,10 @@ def main() -> None:
         args.static_library.unlink()
     run(["llvm-ar", "rcs", str(args.static_library.resolve()), str(amalgamation_obj), str(vfs_obj)])
     args.library.resolve().parent.mkdir(parents=True, exist_ok=True)
-    run(["ld.lld", "-shared", "-Bsymbolic", "--hash-style=sysv", "-soname", "sqlite.so.3",
-         "-z", "max-page-size=0x1000", "-T", str(args.dynamic_linker_script.resolve()),
-         "-o", str(args.library.resolve()), str(amalgamation_obj), str(vfs_obj),
-         str(args.abi_note.resolve()), str(args.runtime_so.resolve())])
+    run(musl_link.shared(args.musl_prefix.resolve(), args.library.resolve(), (
+        amalgamation_obj,
+        vfs_obj,
+    ), (args.runtime_so.resolve(),), soname="sqlite.so.3", flags=args.linker_flag))
     args.stamp.resolve().parent.mkdir(parents=True, exist_ok=True)
     args.stamp.resolve().write_text(json.dumps({
         "sqlite_version": SQLITE_VERSION,

@@ -13,18 +13,25 @@
 #include <ntclks/heap.h>
 #include <leonos/auth.h>
 #include <leonos/elf_abi.h>
+#include <linux/resource.h>
+#include <linux/time.h>
+#include <linux/uio.h>
+#include <linux/capability.h>
+#include <linux/sem.h>
 
 #define SCHED_TASK_NAME_LEN 32u
 /* Initial task-table capacity; the scheduler grows beyond this value. */
 #define SCHED_TASK_MAX 64u
 #define SCHED_TASK_FILE_MAX 64u
 #define SCHED_TASK_FILE_LIMIT 1024u
+#define SCHED_NR_OPEN 1048576u
 #define SCHED_TASK_PTY_FD_MAX 8u
 #define SCHED_TASK_STDIO_MAX 3u
 #define SCHED_EXEC_ARG_MAX 64u
 #define SCHED_EXEC_ENV_MAX 64u
 #define SCHED_EXEC_DATA_MAX 8192u
 #define SCHED_TASK_VMA_MAX 128u
+#define SCHED_TASK_TIMER_MAX 32u
 
 #define TASK_VMA_FLAG_PRIVATE 0x00000001u
 #define TASK_VMA_FLAG_ANON    0x00000002u
@@ -33,6 +40,8 @@
 #define TASK_VMA_FLAG_SHARED_FILE 0x00000010u
 #define TASK_VMA_FLAG_DYNAMIC_LOAD 0x00000020u
 #define TASK_VMA_FLAG_DEVICE  0x00000040u
+#define TASK_VMA_FLAG_SHARED  0x00000080u
+#define TASK_VMA_FLAG_LOCKED  0x00000100u
 
 #define TASK_VMA_PROT_READ  0x1u
 #define TASK_VMA_PROT_WRITE 0x2u
@@ -49,14 +58,21 @@ struct task_vma {
     uint64_t file_offset;
     uint64_t file_limit;
     struct storage_node file_node;
+    struct storage_inode_ref *inode;
 };
 
 struct task_file {
+    struct task_file *description;
+    uint32_t references;
     uint32_t used;
+    uint32_t scm_references;
+    uint32_t scm_gc_seen;
     uint32_t flags;
     uint32_t fd_flags;
-    uint32_t reserved;
+    uint32_t flock_type;
+    uint32_t kind;
     struct storage_node node;
+    struct storage_inode_ref *inode;
     uint64_t offset;
     uint64_t aux;
     /* Per-descriptor device state; currently the evdev EVIOCGRAB token. */
@@ -64,6 +80,13 @@ struct task_file {
     struct storage_read_cursor read_cursor;
     char path[LEONOS_FS_PATH_LEN];
 };
+
+#define TASK_FILE_KIND_SIGNALFD 1u
+
+static inline struct task_file *task_file_description(struct task_file *file)
+{
+    return file && file->description ? file->description : file;
+}
 
 #define TASK_FILE_FLAG_PIPE       0x80000000u
 #define TASK_FILE_FLAG_PIPE_WRITE 0x40000000u
@@ -74,6 +97,21 @@ struct task_file {
 #define TASK_FILE_FLAG_SOCKET_UNIX 0x04000000u
 #define TASK_FILE_FLAG_DEV_SHM    0x01000000u
 #define TASK_FILE_FLAG_SOCKET_INET 0x00800000u
+#define TASK_FILE_FLAG_EVENTFD     0x00400000u
+#define TASK_FILE_FLAG_EPOLL       0x00200000u
+#define TASK_FILE_FLAG_TIMERFD     0x00100000u
+/* Linux FMODE_PATH: the descriptor came from open(O_PATH) and therefore only
+ * holds a path reference.  The raw LINUX_O_PATH bit cannot remain in
+ * file->flags because it is numerically identical to TASK_FILE_FLAG_EPOLL, so
+ * the open path translates it into this private bit. */
+#define TASK_FILE_FLAG_PATH        0x00000004u
+
+struct task_pty_description {
+    uint32_t references;
+    uint32_t status_flags;
+    uint32_t pty_id;
+    uint32_t endpoint;
+};
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {
@@ -82,12 +120,13 @@ struct task_pty_fd {
     uint32_t stream;
     /* Descriptor flags: currently only FD_CLOEXEC. */
     uint32_t flags;
-    /* Open status flags: O_ACCMODE, O_APPEND and O_NONBLOCK. */
+    /* Initial flags before promotion; shared flags live in description. */
     uint32_t status_flags;
     /* Unix98 PTY endpoints use an explicit session and direction. Legacy
      * aliases leave pty_id/endpoint zero and continue using stream. */
     uint32_t pty_id;
     uint32_t endpoint;
+    struct task_pty_description *description;
 };
 
 #define TASK_PTY_ENDPOINT_MASTER 1u
@@ -119,6 +158,8 @@ enum task_kind {
 /* A wait4 caller has claimed this zombie and is releasing it outside the
  * scheduler lock.  It prevents a second waiter from recycling the same slot. */
 #define TASK_FLAG_REAP_IN_PROGRESS 0x00000080u
+#define TASK_FLAG_FORK_NOEXEC 0x00000100u
+#define TASK_FLAG_ORPHAN_NOTIFY 0x00000200u
 
 /* A stopped or continued child retains its task slot until its parent has
  * observed the state transition through waitpid. */
@@ -138,7 +179,10 @@ struct task_process_state {
     uint64_t entry;
     uint64_t stack_top;
     uint64_t stack_low;
+    uint64_t fs_base;
+    uint64_t clear_child_tid;
     uint64_t wake_tick;
+    uint64_t poll_deadline_ticks;
     uint64_t exit_code;
     enum task_state state;
     enum task_kind kind;
@@ -148,6 +192,11 @@ struct task_process_state {
     /* CPUs on which this task may execute. A zero mask is treated as all
      * discovered CPUs for compatibility with older task initializers. */
     uint64_t affinity_mask;
+    /* Linux brk(2) state; the break is process-wide and starts at the end of
+     * the executable's writable data segment. */
+    uint64_t program_break_base;
+    uint64_t program_break;
+    uint32_t mlockall_flags;
 };
 
 struct task_address_space_state {
@@ -156,6 +205,15 @@ struct task_address_space_state {
     struct task_vma *vma_extra;
     uint32_t vma_extra_count;
     uint32_t vma_extra_capacity;
+    uint32_t references;
+    uint64_t initial_stack_top;
+    uint64_t initial_stack_low;
+    uint64_t arg_start, arg_end, env_start, env_end;
+    /* Zero-initialized new/exec address spaces are dumpable by default. */
+    bool nondumpable;
+    struct storage_inode_ref *executable_inode;
+    /* Linux membarrier registration commands are process/MM scoped. */
+    uint32_t membarrier_registrations;
 };
 
 struct task_fd_table_state {
@@ -163,18 +221,63 @@ struct task_fd_table_state {
     struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
     /* Bits for closed implicit stdin/stdout/stderr descriptors. */
     uint32_t closed_stdio_mask;
+    /* Bits for implicit stdio descriptors marked close-on-exec by
+     * close_range(CLOSE_RANGE_CLOEXEC). */
+    uint32_t cloexec_stdio_mask;
     struct task_file *file_extra;
     uint32_t file_extra_count;
     uint32_t file_extra_capacity;
+    struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
+    uint32_t references;
+    uint64_t lock_owner;
+};
+
+struct task_fs_state {
+    uint32_t umask;
+    char cwd[LEONOS_FS_PATH_LEN];
+    uint32_t references;
+};
+
+struct task_sighand_state {
+    struct kernel_signal_action actions[KERNEL_SIGNAL_ACTION_MAX];
+    uint32_t references;
 };
 
 struct task_signal_state {
-    uint32_t pending_signals;
-    uint32_t blocked_signals;
+    uint64_t pending_signals;
+    uint64_t timer_pending_signals;
+    uint64_t blocked_signals;
+    uint64_t sigsuspend_saved_mask;
+    uint32_t sigsuspend_active;
     uint32_t child_event;
     uint32_t stop_signal;
     uint32_t exit_signal;
-    uint32_t ignored_signals;
+    uint32_t parent_exit_signal;
+    uint32_t parent_exit_notified;
+    uint64_t ignored_signals;
+};
+
+/* Linux POSIX timers are per-process objects, but the native task table is
+ * also the ownership boundary for this kernel.  Timer ids are small integers
+ * scoped to the task that created them, matching the ids exposed by musl. */
+struct task_posix_timer {
+    uint32_t used;
+    uint32_t id;
+    int32_t clockid;
+    int32_t notify;
+    int32_t signo;
+    int32_t target_pid;
+    uint64_t value;
+    uint64_t expiry_tick;
+    uint64_t interval_ticks;
+    uint64_t overrun;
+    uint64_t value_data;
+};
+
+struct task_groups {
+    uint32_t references;
+    uint32_t count;
+    uint32_t ids[];
 };
 
 struct task_credentials_state {
@@ -184,10 +287,18 @@ struct task_credentials_state {
     uint32_t egid;
     uint32_t suid;
     uint32_t sgid;
+    uint32_t fsuid;
+    uint32_t fsgid;
+    struct task_groups *groups;
     uint32_t role;
     uint32_t session_id;
-    uint64_t rlimit_nofile;
-    uint64_t rlimit_as;
+    uint32_t umask;
+    uint64_t cap_effective;
+    uint64_t cap_permitted;
+    uint64_t cap_inheritable;
+    uint64_t cap_bset;
+    uint64_t cap_ambient;
+    uint32_t securebits;
     char username[LEONOS_AUTH_USERNAME_LEN];
     char home[LEONOS_AUTH_HOME_LEN];
     char cwd[LEONOS_FS_PATH_LEN];
@@ -197,7 +308,7 @@ struct task_terminal_state {
     uint32_t wait_window_id;
     uint32_t pty_id;
     uint32_t wait_pty_id;
-    struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
+    uint32_t controlling_pty_id;
 };
 
 struct task_loader_state {
@@ -208,13 +319,144 @@ struct task_loader_state {
     uint32_t exec_argc;
     uint32_t exec_envc;
     uint32_t exec_data_len;
+    uint16_t exec_phnum;
+    bool secure_exec;
+    uint16_t exec_reserved;
     char *exec_argv[SCHED_EXEC_ARG_MAX + 1];
     char *exec_envp[SCHED_EXEC_ENV_MAX + 1];
     char exec_data[SCHED_EXEC_DATA_MAX];
     struct leonos_dynamic_launch dynamic_launch;
 };
 
+struct task_rlimit_state {
+    uint32_t references;
+    struct linux_rlimit64 nofile;
+    struct linux_rlimit64 as;
+    struct linux_rlimit64 sigpending;
+    struct linux_rlimit64 stack;
+    struct linux_rlimit64 nproc;
+    struct linux_rlimit64 core;
+};
+
+struct sysv_sem_array;
+struct sysv_sem_wait_list;
+struct sysv_sem_undo;
+struct sysv_sem_undo_list;
+struct task_sysv_sem_state {
+    struct task_sysv_sem_state *previous, *next;
+    struct sysv_sem_wait_list *list;
+    struct sysv_sem_array *array;
+    struct sysv_sem_undo *undo;
+    struct task *task;
+    struct linux_sembuf *ops;
+    struct linux_sembuf fast_ops[64];
+    uint64_t deadline;
+    uint32_t count, blocking, number;
+    int32_t pid, result;
+    bool alter, timed, completed;
+};
+
+struct sysv_msg_queue;
+struct sysv_message;
+struct task_sysv_msg_state {
+    struct task_sysv_msg_state *previous, *next;
+    struct sysv_msg_queue *queue;
+    struct sysv_message *message;
+    struct task *task;
+    uint64_t buffer, size;
+    int64_t type;
+    uint32_t flags, number;
+    int32_t result;
+    bool linked, completed;
+};
+
+struct task_mmsg_state {
+    uint64_t vector, timeout_pointer;
+    struct linux_timespec deadline, remaining;
+    uint32_t count, length, flags;
+    bool active, receiving;
+};
+
 struct task {
+    uint64_t start_uptime_ms;
+    bool no_new_privs;
+    bool nproc_exceeded;
+    struct task_rlimit_state limits;
+    struct task_rlimit_state *shared_limits;
+    uint32_t tgid;
+    uint64_t process_pending_signals;
+    uint64_t *shared_process_pending;
+    struct kernel_sigqueue signal_queue, process_signal_queue;
+    struct kernel_sigqueue *shared_process_signal_queue;
+    uint64_t alarm_deadline;
+    uint64_t alarm_interval_ns;
+    uint64_t alarm_last_expiry;
+    struct task_address_space_state *shared_mm;
+    /* CLONE_VFORK links: the child points at its waiting parent and the
+     * parent points at the child whose exec/exit releases it.  Both fields
+     * are zero for ordinary processes and are maintained under
+     * scheduler_lock. */
+    struct task *vfork_parent;
+    struct task *vfork_child;
+    struct task_fd_table_state *shared_files;
+    struct task_fs_state *shared_fs;
+    struct task_sighand_state *shared_sighand;
+    uint64_t robust_list;
+    uint64_t rseq_area;
+    uint32_t rseq_len;
+    uint32_t rseq_sig;
+    uint64_t signal_stack_base;
+    uint64_t signal_stack_size;
+    uint32_t signal_stack_flags;
+    uint64_t restart_syscall;
+    uint64_t nanosleep_deadline;
+    uint64_t nanosleep_remaining;
+    int32_t nanosleep_clock;
+    uint64_t sigwait_deadline;
+    uint64_t sigwait_mask;
+    uint64_t signalfd_wait_mask;
+    bool signalfd_waiting;
+    void *signalfd_vectors;
+    struct iovec signalfd_fast_vectors[8];
+    uint64_t signalfd_vector_bytes;
+    uint32_t signalfd_vector_count, signalfd_read_flags;
+    uint32_t sigwait_active;
+    struct task_posix_timer timers[SCHED_TASK_TIMER_MAX];
+    struct kernel_wait_queue *waiting_queue;
+    struct task_file *socket_receive_file;
+    uint64_t socket_receive_done;
+    int32_t socket_receive_pid;
+    uint32_t socket_receive_uid;
+    uint32_t socket_receive_gid;
+    uint64_t socket_receive_message;
+    uint64_t socket_receive_control_capacity;
+    uint32_t socket_receive_name_capacity;
+    uint32_t socket_receive_flags, socket_receive_path_length;
+    uint64_t socket_receive_name;
+    unsigned char socket_receive_path[111];
+    struct task_file *syscall_file;
+    uint32_t tty_old_pgrp;
+    struct task_pty_fd syscall_pty;
+    int32_t syscall_fd;
+    uint32_t syscall_file_number;
+    uint64_t socket_io_deadline;
+    bool socket_io_timed;
+    struct task_mmsg_state mmsg;
+    struct task_sysv_msg_state sysv_msg;
+    struct task_sysv_sem_state sysv_sem;
+    struct sysv_sem_undo_list *sysv_undo;
+    struct task *futex_next;
+    uint64_t futex_key;
+    uint64_t futex_domain;
+    uint64_t futex_address;
+    uint64_t futex_deadline;
+    uint32_t futex_bitset;
+    int32_t futex_state;
+#define SCHED_FUTEX_WAITV_MAX 128
+    uint32_t futex_waitv_count;
+    uint32_t futex_waitv_index;
+    uint64_t futex_waitv_domain[SCHED_FUTEX_WAITV_MAX];
+    uint64_t futex_waitv_key[SCHED_FUTEX_WAITV_MAX];
     union {
         struct task_process_state process;
         struct {
@@ -227,7 +469,10 @@ struct task {
             uint64_t entry;
             uint64_t stack_top;
             uint64_t stack_low;
+            uint64_t fs_base;
+            uint64_t clear_child_tid;
             uint64_t wake_tick;
+            uint64_t poll_deadline_ticks;
             uint64_t exit_code;
             enum task_state state;
             enum task_kind kind;
@@ -235,6 +480,9 @@ struct task {
             uint64_t cpu_ticks;
             int32_t priority;
             uint64_t affinity_mask;
+            uint64_t program_break_base;
+            uint64_t program_break;
+            uint32_t mlockall_flags;
         };
     };
     union {
@@ -256,17 +504,25 @@ struct task {
             struct task_file *file_extra;
             uint32_t file_extra_count;
             uint32_t file_extra_capacity;
+            struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
+            uint32_t file_references;
+            uint64_t lock_owner;
         };
     };
     union {
         struct task_signal_state signal_state;
         struct {
-            uint32_t pending_signals;
-            uint32_t blocked_signals;
+            uint64_t pending_signals;
+            uint64_t timer_pending_signals;
+            uint64_t blocked_signals;
+            uint64_t sigsuspend_saved_mask;
+            uint32_t sigsuspend_active;
             uint32_t child_event;
             uint32_t stop_signal;
             uint32_t exit_signal;
-            uint32_t ignored_signals;
+            uint32_t parent_exit_signal;
+            uint32_t parent_exit_notified;
+            uint64_t ignored_signals;
         };
     };
     union {
@@ -278,10 +534,18 @@ struct task {
             uint32_t egid;
             uint32_t suid;
             uint32_t sgid;
+            uint32_t fsuid;
+            uint32_t fsgid;
+            struct task_groups *groups;
             uint32_t role;
             uint32_t session_id;
-            uint64_t rlimit_nofile;
-            uint64_t rlimit_as;
+            uint32_t umask;
+            uint64_t cap_effective;
+            uint64_t cap_permitted;
+            uint64_t cap_inheritable;
+            uint64_t cap_bset;
+            uint64_t cap_ambient;
+            uint32_t securebits;
             char username[LEONOS_AUTH_USERNAME_LEN];
             char home[LEONOS_AUTH_HOME_LEN];
             char cwd[LEONOS_FS_PATH_LEN];
@@ -293,7 +557,7 @@ struct task {
             uint32_t wait_window_id;
             uint32_t pty_id;
             uint32_t wait_pty_id;
-            struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
+            uint32_t controlling_pty_id;
         };
     };
     union {
@@ -306,6 +570,9 @@ struct task {
             uint32_t exec_argc;
             uint32_t exec_envc;
             uint32_t exec_data_len;
+            uint16_t exec_phnum;
+            bool secure_exec;
+            uint16_t exec_reserved;
             char *exec_argv[SCHED_EXEC_ARG_MAX + 1];
             char *exec_envp[SCHED_EXEC_ENV_MAX + 1];
             char exec_data[SCHED_EXEC_DATA_MAX];
@@ -313,10 +580,119 @@ struct task {
         };
     };
     struct trap_frame frame;
+    uint64_t signal_fault_address;
     uint8_t fpu_state[512] __attribute__((aligned(16)));
     struct kernel_signal_action signal_actions[KERNEL_SIGNAL_ACTION_MAX];
     uint32_t running_cpu;
+    uint32_t last_cpu;
 };
+
+int sched_prepare_exec_current(struct task *task);
+void sched_signalfd_reconfigure(struct task *task);
+void sched_exec_replace_mm(struct task *task, const struct address_space *replacement);
+
+/* Inline storage is promoted on first sharing. All users of an ownership
+ * domain must resolve through these accessors, including page-fault paths. */
+/** @brief Resolve the process-wide resource limits shared by CLONE_THREAD. */
+static inline struct task_rlimit_state *sched_task_limits(const struct task *task)
+{
+    return task->shared_limits ? task->shared_limits : (struct task_rlimit_state *)&task->limits;
+}
+
+uint64_t sched_user_task_count(uint32_t uid);
+
+static inline struct task_address_space_state *sched_task_mm(const struct task *task)
+{
+    return task->shared_mm ? task->shared_mm : (struct task_address_space_state *)&task->address_space;
+}
+
+static inline struct address_space *sched_task_as(const struct task *task)
+{
+    return &sched_task_mm(task)->as;
+}
+
+/**
+ * @brief Reset shared-MM dumpability before a credential change becomes visible.
+ * @param task Task changing credentials under the execution lock.
+ * @param euid Next effective user ID.
+ * @param egid Next effective group ID.
+ * @param fsuid Next filesystem user ID.
+ * @param fsgid Next filesystem group ID.
+ * @param permitted Next permitted capability set.
+ * Linux commit_creds uses suid_dumpable, whose default is zero.
+ */
+static inline void task_credentials_prepare(struct task *task, uint32_t euid, uint32_t egid,
+                                            uint32_t fsuid, uint32_t fsgid, uint64_t permitted)
+{
+    if (task->euid != euid || task->egid != egid || task->fsuid != fsuid ||
+        task->fsgid != fsgid || (permitted & ~task->cap_permitted)) {
+        sched_task_mm(task)->nondumpable = true;
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+    }
+}
+
+static inline struct task_fd_table_state *sched_task_fds(const struct task *task)
+{
+    return task->shared_files ? task->shared_files : (struct task_fd_table_state *)&task->fd_table;
+}
+
+static inline char *sched_task_cwd(const struct task *task)
+{
+    return task->shared_fs ? task->shared_fs->cwd : (char *)task->cwd;
+}
+
+static inline uint32_t *sched_task_umask(const struct task *task)
+{
+    return task->shared_fs ? &task->shared_fs->umask : (uint32_t *)&task->umask;
+}
+
+static inline struct kernel_signal_action *sched_task_actions(const struct task *task)
+{
+    return task->shared_sighand ? task->shared_sighand->actions :
+        (struct kernel_signal_action *)task->signal_actions;
+}
+
+static inline uint32_t sched_task_tgid(const struct task *task)
+{
+    return task->tgid ? task->tgid : task->pid;
+}
+
+static inline uint64_t *sched_task_process_pending(const struct task *task)
+{
+    return task->shared_process_pending ? task->shared_process_pending :
+        (uint64_t *)&task->process_pending_signals;
+}
+
+static inline uint64_t sched_task_pending(const struct task *task)
+{
+    return task->pending_signals | *sched_task_process_pending(task);
+}
+
+static inline struct kernel_sigqueue *sched_task_process_signal_queue(struct task *task)
+{
+    return task->shared_process_signal_queue ? task->shared_process_signal_queue :
+        &task->process_signal_queue;
+}
+
+int64_t sched_clone_current(const struct trap_frame *frame, uint64_t flags,
+                           uint64_t stack, uint64_t parent_tid,
+                           uint64_t child_tid, uint64_t tls);
+/**
+ * @brief Native vfork(2): CLONE_VM|CLONE_VFORK|SIGCHLD through the shared
+ * clone path so the caller waits for the child's exec or final exit.
+ */
+int64_t sched_vfork_current(const struct trap_frame *frame);
+/**
+ * @brief True while task is the parent blocked in a CLONE_VFORK wait.
+ *
+ * The link is published and cleared under scheduler_lock. Scheduler selection
+ * also checks it, so an unrelated wakeup cannot return the parent to userspace.
+ */
+static inline bool sched_vfork_waiting(const struct task *task)
+{
+    return task && task->vfork_child != NULL;
+}
+void sched_exit_group(uint32_t tgid, uint64_t code);
 
 struct task_snapshot_info {
     uint32_t pid;
@@ -353,6 +729,13 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry);
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags);
 /**
+ * @brief Wake (or release) task's CLONE_VFORK child as exec/exit completes.
+ *
+ * Called on the child lifecycle paths after no further failure can occur.  The
+ * caller must not hold scheduler_lock.
+ */
+void sched_vfork_child_done(struct task *child);
+/**
  * @brief Duplicates the current user task using copy-on-write user mappings.
  * @param parent_frame Saved fork syscall frame; the child receives a copy with rax set to zero.
  * @return Positive child PID to the parent or a negative errno-style failure.
@@ -373,6 +756,9 @@ void sched_set_task_path(uint32_t pid, const char *path);
 /**
  * @brief Set argv/envp and the packed aux data for task pid's upcoming exec.
  */
+void sched_copy_task_exec_params(struct task *task, uint32_t argc, char *const argv[],
+                                uint32_t envc, char *const envp[],
+                                const char *data, uint32_t data_len);
 void sched_set_task_exec_params(uint32_t pid,
                                 uint32_t argc, char *const argv[],
                                 uint32_t envc, char *const envp[],
@@ -436,6 +822,13 @@ int sched_get_task_affinity(uint32_t pid, uint64_t *mask);
 int sched_set_task_affinity(uint32_t pid, uint64_t mask);
 struct task *sched_current_task(void);
 struct task *sched_find(uint32_t pid);
+
+static inline uint64_t *sched_task_timer_pending(const struct task *task)
+{
+    struct task *leader = task ? sched_find(sched_task_tgid(task)) : NULL;
+    return leader ? &leader->timer_pending_signals : NULL;
+}
+
 struct task *sched_find_by_name(const char *name);
 struct task *sched_find_by_path(const char *path);
 struct task *sched_find_by_path_basename(const char *basename);
@@ -484,6 +877,36 @@ int sched_kill_user_task(uint32_t pid, uint64_t code);
  * @return Zero on success or a negative scheduler error.
  */
 int sched_signal_user_task(uint32_t pid, int signal_number);
+int sched_signal_user_process(uint32_t tgid, int signal_number);
+/** @brief Send to a thread group's shared queue, preserving the supplied siginfo. */
+int sched_signal_user_process_info(uint32_t tgid, int sig, const struct linux_siginfo *info);
+/** @brief Park a sigtimedwait caller, rechecking pending signals after publishing sleep. */
+void sched_signal_wait_current(uint64_t deadline);
+/** @brief Wake a blocked task pinned by the execution lock, retaining current CPU ownership. */
+void sched_wake_interruptible(struct task *task);
+/** @brief Share SEM_UNDO on CLONE_SYSVSEM; ordinary fork starts with no undo records. */
+int task_sysv_sem_clone(struct task *parent, struct task *child, uint64_t flags);
+/** @brief Apply the final owner's undo adjustments on exit and release its records. */
+void task_sysv_sem_exit(struct task *task);
+/** @brief Finish interruptible semaphore waits before a group stop. */
+void task_sysv_sem_stop(struct task *task);
+void sched_signal_job_control(uint32_t tgid, int signal_number);
+void sched_signal_discard(struct task *task, int signal_number);
+uint32_t sched_alarm_task(struct task *task, uint32_t seconds);
+struct linux_itimerval;
+void sched_itimer_task(struct task *task, const struct linux_itimerval *value, struct linux_itimerval *old);
+void sched_alarm_rearm(struct task *task);
+struct linux_itimerspec;
+int sched_timer_create(struct task *task, int32_t clockid, int32_t notify,
+                       int32_t signo, int32_t target_pid, uint64_t value,
+                       int32_t *timerid);
+int sched_timer_delete(struct task *task, int32_t timerid);
+int sched_timer_settime(struct task *task, int32_t timerid, uint32_t flags,
+                        const struct linux_itimerspec *value,
+                        struct linux_itimerspec *old);
+int sched_timer_gettime(struct task *task, int32_t timerid,
+                        struct linux_itimerspec *value);
+int sched_timer_getoverrun(struct task *task, int32_t timerid);
 /**
  * @brief Read or update a task's default/ignored signal disposition.
  * @param pid Target user-task ID.
@@ -503,6 +926,10 @@ int sched_signal_action(uint32_t pid, int signal_number, uint32_t operation,
  */
 int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
                                int signal_number);
+/* Terminal-generated signals originate in the kernel, independent of UID. */
+int sched_signal_kernel_group(uint32_t process_group, int signal_number);
+int64_t sched_process_group_session(uint32_t process_group);
+int sched_process_group_orphaned(uint32_t process_group);
 /**
  * @brief Updates the process group of the caller or one of its direct children.
  * @param caller_pid Process issuing setpgid.
@@ -536,6 +963,7 @@ int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id);
  * attachments referencing pty_id.
  */
 uint32_t sched_pty_reference_count(uint32_t pty_id);
+uint32_t sched_pty_master_reference_count(uint32_t pty_id);
 /**
  * @brief Returns the POSIX process session containing a task.
  * @param pid Task process identifier.
@@ -571,7 +999,7 @@ int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
  * @brief Wait for a child to change state (waitpid): returns child pid or a negative error.
  */
 int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
-                        uint32_t options, int *status);
+                        uint32_t options, int *status, struct linux_siginfo *info);
 /**
  * @brief Copy up to capacity task summaries into out and report the current tick.
  */
@@ -598,5 +1026,18 @@ uint32_t sched_next_session_id(void);
  * @brief Print scheduler and task state to the console for debugging.
  */
 void sched_dump(void);
+
+
+/**
+ * @brief Set the controlling tty of every thread in a process.
+ * @param pid Any thread ID in the process.
+ * @param pty_id New controlling tty ID, or zero to detach.
+ */
+void sched_set_controlling_pty(uint32_t pid, uint32_t pty_id);
+/**
+ * @brief Clear a stolen controlling tty from all its former processes.
+ * @param pty_id Controlling tty to detach.
+ */
+void sched_clear_controlling_pty(uint32_t pty_id);
 
 #endif

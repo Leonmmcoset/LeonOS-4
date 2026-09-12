@@ -58,8 +58,8 @@ Current limits:
   cache, compression, and true streaming downloads are not implemented yet.
 
 The repository owns the font build inputs: `system/fonts/times.ttf` is copied
-to `/system/fonts/times-new-roman.ttf`, and `system/fonts/simsun.ttc` is
-packaged as `/system/fonts/simsun.ttc`. Local and GitHub Actions builds use
+to `/usr/share/fonts/leonos/times-new-roman.ttf`, and `system/fonts/simsun.ttc` is
+packaged as `/usr/share/fonts/leonos/simsun.ttc`. Local and GitHub Actions builds use
 these same repository files.
 
 ## litehtml Status
@@ -100,15 +100,15 @@ To integrate real litehtml, do these in order:
 
 The browser is registered as:
 
-- `/programs/browser/browser.elf`
+- `/usr/lib/leonos/apps/browser/browser.elf`
 - launch alias: `browser`
 - default app for `.html` and `.htm`
 
 Download and image companion apps are registered as:
 
-- `/programs/downloadmgr/downloadmgr.elf`, launch alias `downloadmgr`
-- `/programs/imageview/imageview.elf`, launch alias `imageview`
+- `/usr/lib/leonos/apps/downloadmgr/downloadmgr.elf`, launch alias `downloadmgr`
+- `/usr/lib/leonos/apps/imageview/imageview.elf`, launch alias `imageview`
 - default app for `.bmp` and `.dib`
 
-The generated icon is `/programs/browser/browser.bmp`, following the existing
+The generated icon is `/usr/lib/leonos/apps/browser/browser.bmp`, following the existing
 same-directory/same-basename application icon convention.

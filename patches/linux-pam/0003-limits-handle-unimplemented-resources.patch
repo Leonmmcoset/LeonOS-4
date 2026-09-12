@@ -1,0 +1,39 @@
+From: LeonOS maintainers
+Subject: pam_limits: handle ENOSYS resource probes without ignoring configured limits
+
+LeonOS currently implements only a subset of Linux resource limits. Resource
+enumeration may report ENOSYS for the others. Allow an unconfigured resource
+to be absent, but fail session setup when a matching policy requests one.
+Unexpected enumeration errors still abort. This does not implement missing
+kernel limits or certify full Linux rlimit compatibility.
+
+--- a/modules/pam_limits/pam_limits.c
++++ b/modules/pam_limits/pam_limits.c
+@@ -550,7 +550,9 @@
+ 	int r = getrlimit(i, &pl->limits[i].limit);
++	pl->limits[i].src_soft = LIMITS_DEF_NONE;
++	pl->limits[i].src_hard = LIMITS_DEF_NONE;
+ 	if (r == -1) {
+ 	    pl->limits[i].supported = 0;
+-	    if (errno != EINVAL) {
++	    if (errno != EINVAL && errno != ENOSYS) {
+ 		retval = !PAM_SUCCESS;
+ 	    }
+ 	} else {
+@@ -1182,9 +1184,16 @@
+     for (i=0, status=LIMITED_OK; i<RLIM_NLIMITS; i++) {
+       int res;
+ 
+ 	if (!pl->limits[i].supported) {
++	    if (pl->limits[i].src_soft != LIMITS_DEF_NONE ||
++	        pl->limits[i].src_hard != LIMITS_DEF_NONE) {
++	        pam_syslog(pamh, LOG_ERR,
++	                   "Configured resource limit '%s' is unavailable",
++	                   rlimit2str(i));
++	        return LIMIT_ERR;
++	    }
+ 	    /* skip it if its not known to the system */
+ 	    continue;
+ 	}
+ 	if (pl->limits[i].src_soft == LIMITS_DEF_NONE &&
+ 	    pl->limits[i].src_hard == LIMITS_DEF_NONE) {

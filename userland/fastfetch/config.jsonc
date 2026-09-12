@@ -1,0 +1,11 @@
+{
+  "logo": {
+    "source": "LeonOS"
+  },
+  "modules": [
+    "Title", "Separator", "OS", "Host", "Kernel", "Uptime", "Packages",
+    "Shell", "Display", "DE", "WM", "WMTheme", "Theme", "Icons", "Font",
+    "Cursor", "Terminal", "TerminalFont", "CPU", "GPU", "Memory", "Swap",
+    "Disk", "LocalIp", "Battery", "PowerAdapter", "Locale", "Break", "Colors"
+  ]
+}

@@ -15,6 +15,7 @@ struct disk_block_partition_range {
     uint64_t first_lba;
     uint64_t sector_count;
     uint8_t present;
+    uint8_t unique_guid[16];
 };
 
 struct disk_block_partition_cache {
@@ -96,6 +97,7 @@ static int disk_block_cache_load(uint32_t disk_id, struct install_disk_state *di
         cache->entries[i].first_lba = entries[i].first_lba;
         cache->entries[i].sector_count = entries[i].last_lba - entries[i].first_lba + 1u;
         cache->entries[i].present = 1;
+        __builtin_memcpy(cache->entries[i].unique_guid, entries[i].unique_guid, 16);
     }
     cache->valid = 1;
     return 0;
@@ -330,6 +332,23 @@ int storage_disk_block_info(uint32_t disk_id, int32_t partition_index,
     if (ret < 0) return ret;
     return disk_block_range(disk_id, disk, sector_count, partition_index,
                             out_first_lba, out_sector_count);
+}
+
+/** @brief Return a validated GPT partition UUID; caller holds the storage lock.
+ * @param disk_id Published disk index.
+ * @param partition_index Zero-based GPT slot.
+ * @param uuid Output buffer of at least 37 bytes, including NUL.
+ * @return Zero or negative errno; no UUID is fabricated for non-GPT disks.
+ */
+int storage_disk_partition_uuid(uint32_t disk_id, uint32_t partition_index, char uuid[37])
+{
+    if (!uuid || disk_id >= STORAGE_MAX_INSTALL_DISKS || partition_index >= LEONOS_DISK_MAX_PARTITIONS) return -22;
+    uint64_t first, sectors;
+    int ret = storage_disk_block_info(disk_id, (int32_t)partition_index, &first, &sectors);
+    if (ret < 0) return ret;
+    const uint8_t *guid = disk_block_partition_cache[disk_id].entries[partition_index].unique_guid;
+    storage_partition_guid_text(guid, uuid);
+    return 0;
 }
 
 int storage_disk_block_read(uint32_t disk_id, int32_t partition_index,
@@ -1385,7 +1404,8 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
                    disk_id, partition_index, target ? target : "(auto)",
                    filesystem_name ? filesystem_name : "auto",
                    (unsigned long long)flags);
-    if (flags != 0 || storage_filesystem_from_name(filesystem_name, &requested_filesystem) < 0) {
+    if ((flags & ~(uint64_t)(MS_NOSUID | MS_NOEXEC)) ||
+        storage_filesystem_from_name(filesystem_name, &requested_filesystem) < 0) {
         console_printf("[storage] mount invalid arguments flags=%llu fs_name=%s\n",
                        (unsigned long long)flags,
                        filesystem_name ? filesystem_name : "(null)");
@@ -1438,6 +1458,10 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
         if (target && !storage_text_eq_ci(target, mounted_path)) {
             return -16;
         }
+        uint32_t mounted_id;
+        ret = storage_disk_partition_volume_id(disk_id, partition_index, &mounted_id);
+        if (ret < 0) return ret;
+        if (g_volumes[mounted_id].mount_flags != flags) return -16;
         if (out_volume_id) {
             (void)storage_disk_partition_volume_id(disk_id, partition_index,
                                                    out_volume_id);
@@ -1474,6 +1498,7 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
     storage_memzero(volume, sizeof(*volume));
     volume->volume_id = (uint8_t)volume_id;
     storage_volume_from_install_disk(volume, disk);
+    volume->mount_flags = flags;
     volume->source_disk_id = disk_id;
     volume->source_partition_index = partition_index;
     if (!target || !target[0]) {
@@ -1571,6 +1596,7 @@ int storage_unmount_path(const char *target, uint32_t *out_volume_id)
     if (ret < 0) {
         return ret;
     }
+    if (storage_inode_volume_busy(volume_id)) return -16;
     target_length = storage_strlen(target);
     for (uint32_t i = STORAGE_VOLUME_TARGET_ROOT; i < STORAGE_MAX_VOLUMES; ++i) {
         const struct storage_volume *volume = &g_volumes[i];
@@ -1584,6 +1610,8 @@ int storage_unmount_path(const char *target, uint32_t *out_volume_id)
     if (ret < 0) {
         return ret;
     }
+    ret = storage_sync_volume(volume_id);
+    if (ret < 0) return ret;
     if (g_active_volume == &g_volumes[volume_id]) {
         g_active_volume = &g_volumes[STORAGE_VOLUME_ROOT];
     }

@@ -1,3 +1,10 @@
+static uint64_t storage_metadata_epoch = 1;
+
+uint64_t storage_metadata_generation(void)
+{
+    return storage_metadata_epoch;
+}
+
 void storage_set_io_async_context(bool enabled)
 {
     /* The asynchronous path stores a single pending command, scratch DMA
@@ -53,6 +60,7 @@ static bool storage_async_can_yield(void)
 
 static void storage_begin_mutation(void)
 {
+    ++storage_metadata_epoch;
     if (storage_io_async_context) {
         storage_io_write_started = true;
     }
@@ -79,6 +87,7 @@ static void storage_memzero(void *dst, size_t len)
 
 static void storage_cache_invalidate(void)
 {
+    ++storage_metadata_epoch;
     exfat_cache_invalidate();
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
@@ -97,6 +106,7 @@ static void storage_cache_invalidate(void)
 
 static void storage_sector_cache_invalidate(void)
 {
+    ++storage_metadata_epoch;
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
     storage_dir_lookup_cache.valid = 0;
@@ -197,7 +207,7 @@ static int storage_path_cache_lookup(const char *path, struct storage_node *out)
     for (uint32_t i = 0; i < STORAGE_PATH_CACHE_ENTRIES; ++i) {
         struct storage_path_cache_entry *entry = &storage_path_cache[i];
         if (!entry->valid || entry->volume != g_active_volume ||
-            !storage_text_eq_ci(entry->path, path)) {
+            !storage_text_eq(entry->path, path)) {
             continue;
         }
         if (out) {
@@ -232,7 +242,7 @@ static int storage_dir_index_lookup(uint32_t directory_cluster, const char *name
         struct storage_dir_index_entry *entry = &storage_dir_index[i];
         if (!entry->valid || entry->volume != g_active_volume ||
             entry->directory_cluster != directory_cluster ||
-            !storage_text_eq_ci(entry->name, name)) {
+            !storage_text_eq(entry->name, name)) {
             continue;
         }
         if (out) {
@@ -535,4 +545,19 @@ static uint64_t fat_sector_for_cluster(uint32_t cluster)
 {
     return g_storage.esp_start_lba + g_storage.fat_start_sector +
            ((cluster * 4u) / g_storage.bytes_per_sector);
+}
+
+/** @brief Format an on-disk GPT GUID with the UEFI mixed-endian UUID convention. */
+static void storage_partition_guid_text(const uint8_t guid[16], char uuid[37])
+{
+    static const uint8_t order[] = {3,2,1,0,5,4,7,6,8,9,10,11,12,13,14,15};
+    static const char hex[] = "0123456789abcdef";
+    uint32_t pos = 0;
+    for (uint32_t i = 0; i < 16; ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) uuid[pos++] = '-';
+        uuid[pos++] = hex[guid[order[i]] >> 4];
+        uuid[pos++] = hex[guid[order[i]] & 15];
+    }
+    uuid[pos] = 0;
+
 }

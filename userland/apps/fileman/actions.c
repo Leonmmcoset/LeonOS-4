@@ -1,6 +1,20 @@
 #include "fileman.h"
 #include <leonos/launch_result.h>
 
+/* Land the cursor on `name` after a refresh, scrolling it into view. */
+static void select_entry_by_name(const char *name, uint32_t count)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        if (text_eq(entries[i].name, name)) {
+            file_list.selected = (int32_t)i;
+            if (i >= file_list.scroll + file_list.visible_rows) {
+                file_list.scroll = (int32_t)(i - file_list.visible_rows + 1);
+            }
+            return;
+        }
+    }
+}
+
 void open_selected_entry(void)
 {
     char path[LEONOS_FS_PATH_LEN];
@@ -74,8 +88,20 @@ void create_new_folder(void)
         return;
     }
     build_child_path(path, sizeof(path), name);
-    ret = mkdir(path, 0);
+    ret = mkdir(path, 0777);
     if (ret < 0) {
+        uint32_t elevated_count = 0;
+        /* A protected parent directory: create it through the broker, which
+         * also hands back the refreshed listing. */
+        if (permission_error(ret) &&
+            fileman_mkdir_elevated(current_path, name, entries,
+                                   FILEMAN_MAX_ENTRIES,
+                                   &elevated_count) == 0) {
+            select_entry_by_name(name, elevated_count);
+            set_status(T("Folder created (elevated)",
+                         "文件夹已创建（已提权）"));
+            return;
+        }
         set_status_error("Create folder failed ", ret);
         return;
     }
@@ -173,6 +199,15 @@ void rename_selected_entry(void)
     build_child_path(new_path, sizeof(new_path), name);
     ret = rename(old_path, new_path);
     if (ret < 0) {
+        uint32_t elevated_count = 0;
+        if (permission_error(ret) &&
+            fileman_rename_elevated(old_path, new_path, entries,
+                                    FILEMAN_MAX_ENTRIES,
+                                    &elevated_count) == 0) {
+            select_entry_by_name(name, elevated_count);
+            set_status(T("Renamed (elevated)", "已重命名（已提权）"));
+            return;
+        }
         set_status_error("Rename failed ", ret);
         return;
     }
@@ -207,8 +242,34 @@ void delete_selected_entry(void)
         set_status(T("Delete canceled", "已取消删除"));
         return;
     }
-    build_child_path(path, sizeof(path), entries[file_list.selected].name);
-    ret = entries[file_list.selected].type == LEONOS_FS_TYPE_DIR ? rmdir(path) : unlink(path);
+    {
+        uint8_t is_dir = entries[file_list.selected].type == LEONOS_FS_TYPE_DIR;
+        uint32_t elevated_count = 0;
+        build_child_path(path, sizeof(path), entries[file_list.selected].name);
+        ret = is_dir ? rmdir(path) : unlink(path);
+        if (ret < 0 && permission_error(ret)) {
+            /* Protected parent directory: the broker removes it, and demands
+             * an explicit confirmation word for a directory because that
+             * removal is unrecoverable. */
+            if (is_dir && !leonos_ui_show_confirm_dialog(
+                    T("Delete Folder", "删除文件夹"),
+                    T("This permanently deletes the folder and everything "
+                      "inside it. Continue?",
+                      "此操作将永久删除该文件夹及其全部内容。是否继续？"),
+                    0)) {
+                set_status(T("Delete canceled", "已取消删除"));
+                return;
+            }
+            if (fileman_delete_elevated(path, is_dir, entries,
+                                        FILEMAN_MAX_ENTRIES,
+                                        &elevated_count) == 0) {
+                present_directory(elevated_count, T("Items ", "项目 "),
+                                  " in ");
+                set_status(T("Deleted (elevated)", "已删除（已提权）"));
+                return;
+            }
+        }
+    }
     if (ret < 0) {
         if (ret == -39) {
             set_status(T("Delete failed: directory not empty", "删除失败：目录非空"));
@@ -316,7 +377,7 @@ void extract_tar_with_path(const char *tar_path)
     if (ext && text_eq(ext, ".tar")) {
         dest_dir[plen - 4U] = 0;
     }
-    if (mkdir(dest_dir, 0) < 0) {
+    if (mkdir(dest_dir, 0777) < 0) {
         struct leonos_stat st;
         if (leonos_stat_legacy(dest_dir, &st) != 0 || st.type != LEONOS_FS_TYPE_DIR) {
             set_status_code("Extract mkdir failed ", -1);
@@ -386,7 +447,7 @@ void compress_selected_to_tar(void)
         memcpy(tar_path + clen + 1U, base_name, nlen);
         memcpy(tar_path + clen + 1U + nlen, ".tar", 5U);
     }
-    tar_fd = open(tar_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    tar_fd = open(tar_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (tar_fd < 0) {
         set_status(T("Cannot create tar", "无法创建tar"));
         return;

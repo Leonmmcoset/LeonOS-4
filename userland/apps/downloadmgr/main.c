@@ -217,7 +217,7 @@ static int choose_target_path(char *dst, uint32_t cap, const char *url)
     char numbered[LEONOS_FS_NAME_LEN];
     struct leonos_stat st;
     build_download_dir(dir, sizeof(dir));
-    (void)mkdir(dir, 0);
+    (void)mkdir(dir, 0700);
     sanitize_filename(name, sizeof(name), url_filename(url));
     for (uint32_t i = 0; i < 100U; ++i) {
         if (i == 0) {
@@ -265,7 +265,7 @@ static void set_detail_done(const struct leonos_http_response *response)
 
 static int save_body(const char *path, const char *data, uint32_t len)
 {
-    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     long wrote;
     if (fd < 0) {
         return fd;

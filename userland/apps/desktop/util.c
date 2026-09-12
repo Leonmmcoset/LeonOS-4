@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include "desktop.h"
 
 uint32_t fb_w(void)
@@ -411,7 +412,7 @@ static int desktop_appearance_config_path(char *path, uint32_t path_len)
     }
     path[0] = 0;
     user = (struct leonos_user_info){0};
-    if (leonos_auth_current(&user) < 0 || !user.uid || !user.home[0]) {
+    if (leonos_session_current(&user) < 0 || !user.home[0]) {
         return 0;
     }
     append_text(path, &pos, path_len, user.home);
@@ -516,7 +517,7 @@ int desktop_save_appearance_config(void)
     append_text(buf, &pos, sizeof(buf),
                 desktop_wallpaper_mode_name(desktop_wallpaper_mode));
     append_char(buf, &pos, sizeof(buf), '\n');
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -571,7 +572,7 @@ int desktop_save_display_config(void)
                 desktop_boot_theme_default == LEONOS_UI_THEME_WIN95 ? "win95" : "metro");
     append_char(buf, &pos, sizeof(buf), '\n');
     fd = open(DISPLAY_CONFIG_PATH,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -753,6 +754,9 @@ void start_menu_set_open(uint8_t open)
     start_menu_opening = open;
     start_menu_animating = 1;
     start_menu_anim_start = leonos_uptime_ms();
+    if (open) {
+        printf("[desktop.elf] DBG menu-open t0=%lu\n", start_menu_anim_start);
+    }
     full_redraw_pending = 1;
 }
 

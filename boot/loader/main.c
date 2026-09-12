@@ -34,9 +34,12 @@
 #define EM_X86_64 62
 #define PT_LOAD 1
 
-#define KERNEL_PATH "/system/kernel.sys"
-#define MIDDLELAYER_PATH "/system/middlelayer.sys"
-#define READ_BUFFER_SIZE (1024u * 1024u)
+#define KERNEL_PATH "/leonos/kernel.sys"
+#define MIDDLELAYER_PATH "/leonos/middlelayer.sys"
+/* Kernel and middlelayer images can exceed one MiB once debug-safe ELF
+ * sections are retained. Keep the EFI fallback buffer above the largest
+ * shipped image while preserving the module-based fast path. */
+#define READ_BUFFER_SIZE (8u * 1024u * 1024u)
 #define EFI_MEMORY_MAP_BYTES (256u * 1024u)
 #define LOADER_LOG_MAX_COLUMNS 512u
 #define LOADER_LOG_MAX_ROWS 192u
@@ -1694,10 +1697,10 @@ static int loader_consume_kernel_debug_marker(void)
     static const char marker[] = "LEONOS-KDBG-1\n";
     char value[sizeof(marker) + 8U];
     uint64_t len = 0;
-    if (efi_read_file("/system/state/kerneldebug.next", value, sizeof(value) - 1U, &len) < 0) {
+    if (efi_read_file("/leonos/state/kerneldebug.next", value, sizeof(value) - 1U, &len) < 0) {
         return 0;
     }
-    if (efi_delete_file("/system/state/kerneldebug.next") < 0) {
+    if (efi_delete_file("/leonos/state/kerneldebug.next") < 0) {
         serial_write("[loader] kernel debug marker could not be consumed\n");
         return 0;
     }
@@ -1757,7 +1760,7 @@ static void loader_load_ui_theme(void)
     uint64_t len = 0;
     static const char win95[] = "theme=win95";
     handoff.ui_theme = 1u;
-    if (efi_read_file("/system/config/display.conf", config, sizeof(config), &len) < 0) {
+    if (efi_read_file("/leonos/config/display.conf", config, sizeof(config), &len) < 0) {
         return;
     }
     for (uint64_t index = 0; index + sizeof(win95) - 1u <= len; ++index) {
@@ -2018,7 +2021,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
             __asm__ volatile("hlt");
         }
     }
-    handoff.kernel.path = "/boot/system/kernel.sys";
+    handoff.kernel.path = "/boot/leonos/kernel.sys";
     serial_write("[loader] kernel loaded entry=");
     serial_write_hex(handoff.kernel.entry);
     serial_write(" range=");
@@ -2073,7 +2076,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
             __asm__ volatile("hlt");
         }
     }
-    handoff.middlelayer.path = "/boot/system/middlelayer.sys";
+    handoff.middlelayer.path = "/boot/leonos/middlelayer.sys";
     serial_write("[loader] middlelayer loaded entry=");
     serial_write_hex(handoff.middlelayer.entry);
     serial_write(" range=");

@@ -11,6 +11,31 @@
 #define X86_CR0_NE (1ULL << 5)
 #define X86_CR4_OSFXSR (1ULL << 9)
 #define X86_CR4_OSXMMEXCPT (1ULL << 10)
+#define X86_IA32_FS_BASE 0xc0000100u
+
+static void write_msr(uint32_t msr, uint64_t value)
+{
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)value),
+                     "d"((uint32_t)(value >> 32)) : "memory");
+}
+
+static uint64_t read_msr(uint32_t msr)
+{
+    uint32_t low;
+    uint32_t high;
+    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    return ((uint64_t)high << 32) | low;
+}
+
+void arch_set_user_fs(uint64_t base)
+{
+    write_msr(X86_IA32_FS_BASE, base);
+}
+
+uint64_t arch_get_user_fs(void)
+{
+    return read_msr(X86_IA32_FS_BASE);
+}
 
 static uint8_t initial_fpu_state[512] __attribute__((aligned(16)));
 

@@ -7,11 +7,17 @@
 
 #include <ntclks/trap.h>
 #include <ntclks/types.h>
+#include <linux/signal.h>
 
 struct task;
+struct kernel_sigqueue_entry;
 
-#define KERNEL_SIGNAL_ACTION_MAX 32u
-#define KERNEL_SIGNAL_VALID_MASK 0xfffffffeu
+struct kernel_sigqueue {
+    struct kernel_sigqueue_entry *head, *tail;
+};
+
+#define KERNEL_SIGNAL_ACTION_MAX 65u
+#define KERNEL_SIGNAL_VALID_MASK UINT64_MAX
 
 struct kernel_signal_action {
     uint64_t handler;
@@ -32,6 +38,24 @@ struct kernel_signal_action {
  * @return 0 on success, or a negative scheduler-style error.
  */
 int kernel_signal_queue_task(struct task *task, int signal_number);
+/** @brief Send a thread-directed signal with native Linux siginfo. */
+int kernel_signal_queue_task_info(struct task *task, int sig, const struct linux_siginfo *info);
+/** @brief Append one pending signal, enforcing the receiver's per-UID queue limit. */
+int kernel_signal_enqueue(struct task *task, bool process, int sig, const struct linux_siginfo *info);
+/** @brief Consume one allowed signal, private queue before the shared queue. */
+int kernel_signal_dequeue(struct task *task, uint64_t allowed, struct linux_siginfo *info);
+/** @brief Flush matching records and release their original UID charges. */
+void kernel_signal_flush(struct task *task, bool process, uint64_t mask);
+/** @brief Move shared pending state into the sole surviving exec thread. */
+void kernel_signal_detach_process(struct task *task);
+/** @brief Implement native rt_sigqueueinfo and rt_tgsigqueueinfo user-copy and permission checks. */
+int64_t kernel_signal_queueinfo(int32_t tgid, int32_t tid, int sig, uint64_t info, bool thread);
+/** @brief Test Linux's default-ignore signal set. */
+bool kernel_signal_default_ignored(int sig);
+/** @brief Pending signal that can interrupt a Linux TASK_KILLABLE wait, or zero. */
+int kernel_signal_fatal_pending(const struct task *task);
+/** @brief Force a synchronous fault, preserving a usable unblocked handler. */
+void kernel_signal_force_fault(struct task *task, int sig, int code, uint64_t address);
 
 /**
  * @brief Install one user signal action and report the previous action.
@@ -72,8 +96,8 @@ void kernel_signal_reset_handlers(struct task *task);
  * @brief Copy the task's currently effective signal state into out.
  */
 void kernel_signal_state_snapshot(const struct task *task,
-                                  struct kernel_signal_action actions[32],
-                                  uint32_t *pending, uint32_t *blocked,
-                                  uint32_t *ignored);
+                                  struct kernel_signal_action actions[KERNEL_SIGNAL_ACTION_MAX],
+                                  uint64_t *pending, uint64_t *blocked,
+                                  uint64_t *ignored);
 
 #endif

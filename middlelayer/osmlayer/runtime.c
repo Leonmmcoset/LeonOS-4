@@ -7,6 +7,8 @@
 #include <leonos/auth.h>
 #include <leonos/boot_handoff.h>
 #include <leonos/fs.h>
+#include <leonos/permissions.h>
+#include <leonos/layout.h>
 
 #define OSMLAYER_VFS_OP_RESOLVE_PATH 1u
 #define OSMLAYER_FS_NAME_LEN 128u
@@ -89,15 +91,13 @@ struct osmlayer_account {
     uint32_t role;
     uint32_t flags;
     char username[LEONOS_AUTH_USERNAME_LEN];
-    uint8_t salt[8];
-    uint8_t hash[32];
 };
 
-#define OSMLAYER_ACCOUNTS_PATH "/system/state/accounts.db"
-#define OSMLAYER_ACCOUNT_DB_MAX 8192u
+#define OSMLAYER_ACCOUNTS_PATH LEONOS_PATH_ACCOUNTS_DB
 
 static const struct leonos_kernel_services *osmlayer_services;
-static struct osmlayer_account osmlayer_auth_accounts[LEONOS_AUTH_MAX_USERS];
+/* Legacy ACL defaults have no account authority; ext2 owns UID/GID/mode. */
+static struct osmlayer_account *const osmlayer_auth_accounts = NULL;
 
 /**
  * @brief Fill `len` bytes at `dst` with the low byte of `value`, returning `dst`.
@@ -632,45 +632,10 @@ static void osmlayer_sha256_final(struct osmlayer_sha256_ctx *ctx, uint8_t hash[
 }
 
 /**
- * @brief Checks the password length accepted by the authentication ABI.
- * @param password NUL-terminated password to validate.
- * @return Non-zero when the password is non-empty and fits the ABI field.
- */
-static int osmlayer_password_valid(const char *password)
-{
-    uint32_t len = osmlayer_strlen(password);
-    return len > 0 && len < LEONOS_AUTH_PASSWORD_LEN;
-}
-
-/**
- * @brief Validates an account name.
- *
- * LeonOS account names use lower-case ASCII letters, digits, and underscores.
- * @param username NUL-terminated account name.
- * @return Non-zero when the name is valid and fits the ABI field.
- */
-static int osmlayer_username_valid(const char *username)
-{
-    uint32_t len = osmlayer_strlen(username);
-    if (len == 0 || len >= LEONOS_AUTH_USERNAME_LEN) {
-        return 0;
-    }
-    for (uint32_t i = 0; i < len; ++i) {
-        char ch = username[i];
-        if (!((ch >= 'a' && ch <= 'z') ||
-              (ch >= '0' && ch <= '9') ||
-              ch == '_')) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-/**
  * @brief Builds the home path for an account.
  * @param home Destination buffer.
  * @param cap Capacity of `home`, including its terminator.
- * @param username Account name appended after `/users/`.
+ * @param username Account name appended after `/home/`.
  */
 static void osmlayer_home_for_user(char *home, uint32_t cap, const char *username)
 {
@@ -679,28 +644,10 @@ static void osmlayer_home_for_user(char *home, uint32_t cap, const char *usernam
         return;
     }
     home[0] = 0;
-    osmlayer_append_text(home, &pos, cap, "/users/");
+    osmlayer_append_text(home, &pos, cap, "/home/");
     osmlayer_append_text(home, &pos, cap, username);
 }
 
-/**
- * @brief Converts an internal account record to the public user structure.
- * @param info Destination user information structure.
- * @param account Account record to expose.
- */
-static void osmlayer_fill_user_info(struct leonos_user_info *info,
-                                    const struct osmlayer_account *account)
-{
-    if (!info || !account) {
-        return;
-    }
-    memset(info, 0, sizeof(*info));
-    info->uid = account->uid;
-    info->role = account->role;
-    info->flags = account->flags;
-    osmlayer_copy_text(info->username, sizeof(info->username), account->username);
-    osmlayer_home_for_user(info->home, sizeof(info->home), account->username);
-}
 
 /**
  * @brief Parses an unsigned decimal integer without libc dependencies.
@@ -789,157 +736,6 @@ static void osmlayer_append_hex(char *buf, uint32_t *pos, uint32_t cap,
 }
 
 /**
- * @brief Derives deterministic seed material for password hashing.
- * @param username Account name.
- * @param password Password text.
- * @param uid Numeric user ID mixed into the seed.
- * @return Non-zero seed value used by the salt generator.
- */
-static uint64_t osmlayer_hash_seed(const char *username, const char *password, uint32_t uid)
-{
-    uint64_t h = 1469598103934665603ULL ^ uid;
-    while (username && *username) {
-        h ^= (uint8_t)*username++;
-        h *= 1099511628211ULL;
-    }
-    while (password && *password) {
-        h ^= (uint8_t)*password++;
-        h *= 1099511628211ULL;
-    }
-    return h;
-}
-
-/**
- * @brief Generates the eight-byte per-account password salt.
- * @param salt Destination salt buffer.
- * @param username Account name used as entropy input.
- * @param password Password text used as entropy input.
- * @param uid User ID used as entropy input.
- */
-static void osmlayer_make_salt(uint8_t salt[8], const char *username,
-                               const char *password, uint32_t uid)
-{
-    uint64_t seed = osmlayer_hash_seed(username, password, uid);
-    for (uint32_t i = 0; i < 8; ++i) {
-        seed ^= seed >> 12;
-        seed ^= seed << 25;
-        seed ^= seed >> 27;
-        salt[i] = (uint8_t)((seed * 2685821657736338717ULL) >> 56);
-    }
-}
-
-/**
- * @brief Computes the stored password digest from a salt and password.
- * @param salt Eight-byte account salt.
- * @param password NUL-terminated password.
- * @param hash Destination 32-byte digest.
- */
-static void osmlayer_hash_password(const uint8_t salt[8], const char *password,
-                                   uint8_t hash[32])
-{
-    struct osmlayer_sha256_ctx ctx;
-    uint32_t len = osmlayer_strlen(password);
-    osmlayer_sha256_init(&ctx);
-    osmlayer_sha256_update(&ctx, salt, 8);
-    osmlayer_sha256_update(&ctx, password, len);
-    osmlayer_sha256_final(&ctx, hash);
-}
-
-/**
- * @brief Splits an account database line in place at `|` separators.
- * @param line Mutable line buffer; separators are replaced with NUL bytes.
- * @param fields Output pointers into `line`.
- * @param max_fields Capacity of `fields`.
- * @return Number of fields found, or zero for invalid arguments.
- */
-static int osmlayer_split_fields(char *line, char *fields[], uint32_t max_fields)
-{
-    uint32_t count = 0;
-    if (!line || !fields || max_fields == 0) {
-        return 0;
-    }
-    fields[count++] = line;
-    for (uint32_t i = 0; line[i]; ++i) {
-        if (line[i] == '|') {
-            line[i] = 0;
-            if (count < max_fields) {
-                fields[count++] = &line[i + 1u];
-            }
-        }
-    }
-    return (int)count;
-}
-
-/**
- * @brief Loads and validates the persistent account database.
- * @param accounts Destination array for at most `LEONOS_AUTH_MAX_USERS` records.
- * @param out_count Optional number of records successfully loaded.
- * @return Zero on success (including a missing database), or a storage error.
- */
-static int osmlayer_accounts_load(struct osmlayer_account accounts[LEONOS_AUTH_MAX_USERS],
-                                  uint32_t *out_count)
-{
-    static char db[OSMLAYER_ACCOUNT_DB_MAX];
-    uint32_t len = 0;
-    uint32_t count = 0;
-    int ret;
-    memset(accounts, 0, sizeof(struct osmlayer_account) * LEONOS_AUTH_MAX_USERS);
-    if (out_count) {
-        *out_count = 0;
-    }
-    ret = osmlayer_service_read_file(OSMLAYER_ACCOUNTS_PATH, db, sizeof(db) - 1u, &len);
-    if (ret == -2) {
-        return 0;
-    }
-    if (ret < 0) {
-        return ret;
-    }
-    db[len] = 0;
-    uint32_t pos = 0;
-    while (pos < len && count < LEONOS_AUTH_MAX_USERS) {
-        char line[192];
-        char *fields[6];
-        uint32_t line_len = 0;
-        while (pos < len && db[pos] != '\n' && line_len + 1u < sizeof(line)) {
-            char ch = db[pos++];
-            if (ch != '\r') {
-                line[line_len++] = ch;
-            }
-        }
-        while (pos < len && (db[pos] == '\n' || db[pos] == '\r')) {
-            ++pos;
-        }
-        line[line_len] = 0;
-        if (!line[0] || line[0] == '#') {
-            continue;
-        }
-        if (osmlayer_split_fields(line, fields, 6) != 6) {
-            continue;
-        }
-        int ok_uid = 0;
-        int ok_role = 0;
-        int ok_flags = 0;
-        struct osmlayer_account *account = &accounts[count];
-        account->uid = osmlayer_parse_u32(fields[0], &ok_uid);
-        account->role = osmlayer_parse_u32(fields[1], &ok_role);
-        account->flags = osmlayer_parse_u32(fields[2], &ok_flags);
-        if (!ok_uid || !ok_role || !ok_flags ||
-            !osmlayer_username_valid(fields[3]) ||
-            osmlayer_parse_hex(fields[4], account->salt, 8) < 0 ||
-            osmlayer_parse_hex(fields[5], account->hash, 32) < 0) {
-            continue;
-        }
-        account->used = 1;
-        osmlayer_copy_text(account->username, sizeof(account->username), fields[3]);
-        ++count;
-    }
-    if (out_count) {
-        *out_count = count;
-    }
-    return 0;
-}
-
-/**
  * @brief Appends an unsigned decimal value to a bounded string.
  * @param buf Destination string buffer.
  * @param pos Current output offset.
@@ -949,96 +745,6 @@ static int osmlayer_accounts_load(struct osmlayer_account accounts[LEONOS_AUTH_M
 static void osmlayer_append_dec(char *buf, uint32_t *pos, uint32_t cap, uint32_t value)
 {
     osmlayer_append_u64(buf, pos, cap, value);
-}
-
-/**
- * @brief Serializes account records and writes the authentication database.
- * @param accounts Records to persist.
- * @param count Number of entries in `accounts`.
- * @return Zero on success, or a capacity/storage error.
- */
-static int osmlayer_accounts_save(const struct osmlayer_account accounts[LEONOS_AUTH_MAX_USERS],
-                                  uint32_t count)
-{
-    static char db[OSMLAYER_ACCOUNT_DB_MAX];
-    uint32_t pos = 0;
-    osmlayer_append_text(db, &pos, sizeof(db), "# leonos-accounts-v1\n");
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!accounts[i].used) {
-            continue;
-        }
-        osmlayer_append_dec(db, &pos, sizeof(db), accounts[i].uid);
-        osmlayer_append_char(db, &pos, sizeof(db), '|');
-        osmlayer_append_dec(db, &pos, sizeof(db), accounts[i].role);
-        osmlayer_append_char(db, &pos, sizeof(db), '|');
-        osmlayer_append_dec(db, &pos, sizeof(db), accounts[i].flags);
-        osmlayer_append_char(db, &pos, sizeof(db), '|');
-        osmlayer_append_text(db, &pos, sizeof(db), accounts[i].username);
-        osmlayer_append_char(db, &pos, sizeof(db), '|');
-        osmlayer_append_hex(db, &pos, sizeof(db), accounts[i].salt, 8);
-        osmlayer_append_char(db, &pos, sizeof(db), '|');
-        osmlayer_append_hex(db, &pos, sizeof(db), accounts[i].hash, 32);
-        osmlayer_append_char(db, &pos, sizeof(db), '\n');
-        if (pos + 96u >= sizeof(db)) {
-            return -7;
-        }
-    }
-    return osmlayer_service_write_file(OSMLAYER_ACCOUNTS_PATH, db, pos);
-}
-
-/**
- * @brief Counts enabled administrator accounts.
- * @param accounts Account records to inspect.
- * @param count Number of entries in `accounts`.
- * @return Number of records with the administrator role and no disabled flag.
- */
-static int osmlayer_account_enabled_admin_count(const struct osmlayer_account *accounts,
-                                                uint32_t count)
-{
-    uint32_t admins = 0;
-    for (uint32_t i = 0; i < count; ++i) {
-        if (accounts[i].used && accounts[i].role == LEONOS_AUTH_ROLE_ADMIN &&
-            !(accounts[i].flags & LEONOS_AUTH_USER_DISABLED)) {
-            ++admins;
-        }
-    }
-    return (int)admins;
-}
-
-/**
- * @brief Finds an account by its case-sensitive username.
- * @param accounts Account records to search.
- * @param count Number of entries in `accounts`.
- * @param username Name to find.
- * @return Array index, or -1 when no matching used record exists.
- */
-static int osmlayer_find_account_by_name(struct osmlayer_account *accounts,
-                                         uint32_t count, const char *username)
-{
-    for (uint32_t i = 0; i < count; ++i) {
-        if (accounts[i].used && osmlayer_text_eq(accounts[i].username, username)) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
-/**
- * @brief Finds an account by numeric user ID.
- * @param accounts Account records to search.
- * @param count Number of entries in `accounts`.
- * @param uid User ID to find.
- * @return Array index, or -1 when no matching used record exists.
- */
-static int osmlayer_find_account_by_uid(struct osmlayer_account *accounts,
-                                        uint32_t count, uint32_t uid)
-{
-    for (uint32_t i = 0; i < count; ++i) {
-        if (accounts[i].used && accounts[i].uid == uid) {
-            return (int)i;
-        }
-    }
-    return -1;
 }
 
 /**
@@ -1053,6 +759,8 @@ static int osmlayer_path_is_accounts_db(const char *path);
 #define OSMLAYER_ACL_MAX_BYTES 8192U
 #define OSMLAYER_ACL_MAX_RECORDS 64U
 #define OSMLAYER_ACL_TLV_RECORD 1U
+#define OSMLAYER_ACL_TLV_POSIX 2U
+#define OSMLAYER_ACL_DISK_VERSION 2U
 #define OSMLAYER_ACL_LEGACY_ACE_DENY 0x00000001U
 
 struct osmlayer_acl_record {
@@ -1060,6 +768,9 @@ struct osmlayer_acl_record {
     uint32_t owner_uid;
     uint32_t flags;
     uint32_t ace_count;
+    uint32_t has_mode;
+    uint32_t mode;
+    uint32_t gid;
     struct leonos_fs_acl_ace aces[LEONOS_FS_ACL_MAX_ACE];
 };
 
@@ -1069,6 +780,8 @@ struct osmlayer_acl_dir {
     struct osmlayer_acl_record records[OSMLAYER_ACL_MAX_RECORDS];
 };
 
+/* A directory occupies about 25 KiB. Its owners must stay noinline so the
+ * auth dispatcher does not reserve a second copy on the 64 KiB kernel stack. */
 static char osmlayer_acl_buf[OSMLAYER_ACL_MAX_BYTES];
 
 /**
@@ -1298,7 +1011,8 @@ static int osmlayer_acl_load_dir(const char *dir_path, struct osmlayer_acl_dir *
     }
     if (len < 16 ||
         osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf) != OSMLAYER_ACL_MAGIC ||
-        osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf + 4) != LEONOS_FS_ACL_VERSION ||
+        (osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf + 4) != LEONOS_FS_ACL_VERSION &&
+         osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf + 4) != OSMLAYER_ACL_DISK_VERSION) ||
         osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf + 12) !=
             osmlayer_acl_checksum((const uint8_t *)osmlayer_acl_buf, len)) {
         dir->corrupt = 1;
@@ -1313,11 +1027,12 @@ static int osmlayer_acl_load_dir(const char *dir_path, struct osmlayer_acl_dir *
             dir->corrupt = 1;
             return 0;
         }
-        if (type == OSMLAYER_ACL_TLV_RECORD) {
+        if (type == OSMLAYER_ACL_TLV_RECORD || type == OSMLAYER_ACL_TLV_POSIX) {
             const uint8_t *p = (const uint8_t *)osmlayer_acl_buf + pos + 4u;
             uint16_t name_len = osmlayer_get_u16(p);
             uint16_t ace_count = osmlayer_get_u16(p + 2u);
-            uint32_t need = 12u + (uint32_t)name_len + (uint32_t)ace_count * 12u;
+            uint32_t prefix = type == OSMLAYER_ACL_TLV_POSIX ? 20u : 12u;
+            uint32_t need = prefix + (uint32_t)name_len + (uint32_t)ace_count * 12u;
             if (name_len == 0 || name_len >= LEONOS_FS_NAME_LEN ||
                 ace_count > LEONOS_FS_ACL_MAX_ACE || need > tlv_len) {
                 dir->corrupt = 1;
@@ -1327,11 +1042,16 @@ static int osmlayer_acl_load_dir(const char *dir_path, struct osmlayer_acl_dir *
             rec->owner_uid = osmlayer_get_u32(p + 4u);
             rec->flags = osmlayer_get_u32(p + 8u);
             rec->ace_count = ace_count;
+            rec->has_mode = type == OSMLAYER_ACL_TLV_POSIX;
+            if (rec->has_mode) {
+                rec->gid = osmlayer_get_u32(p + 12u);
+                rec->mode = osmlayer_get_u32(p + 16u) & 0177777u;
+            }
             for (uint32_t i = 0; i < name_len; ++i) {
-                rec->name[i] = (char)p[12u + i];
+                rec->name[i] = (char)p[prefix + i];
             }
             rec->name[name_len] = 0;
-            const uint8_t *ace = p + 12u + name_len;
+            const uint8_t *ace = p + prefix + name_len;
             for (uint32_t i = 0; i < ace_count; ++i) {
                 uint32_t legacy_flags = osmlayer_get_u32(ace + i * 12u + 4u);
                 rec->aces[i].principal = osmlayer_get_u32(ace + i * 12u);
@@ -1364,25 +1084,30 @@ static int osmlayer_acl_save_dir(const char *dir_path, const struct osmlayer_acl
     }
     memset(osmlayer_acl_buf, 0, sizeof(osmlayer_acl_buf));
     osmlayer_put_u32(buf, OSMLAYER_ACL_MAGIC);
-    osmlayer_put_u32(buf + 4u, LEONOS_FS_ACL_VERSION);
+    osmlayer_put_u32(buf + 4u, OSMLAYER_ACL_DISK_VERSION);
     osmlayer_put_u32(buf + 8u, dir->count);
     for (uint32_t r = 0; r < dir->count; ++r) {
         const struct osmlayer_acl_record *rec = &dir->records[r];
         uint32_t name_len = osmlayer_strlen(rec->name);
-        uint32_t payload_len = 12u + name_len + rec->ace_count * 12u;
+        uint32_t prefix = rec->has_mode ? 20u : 12u;
+        uint32_t payload_len = prefix + name_len + rec->ace_count * 12u;
         if (!name_len || name_len >= LEONOS_FS_NAME_LEN ||
             rec->ace_count > LEONOS_FS_ACL_MAX_ACE ||
             pos + 4u + payload_len > sizeof(osmlayer_acl_buf)) {
             return -7;
         }
-        osmlayer_put_u16(buf + pos, OSMLAYER_ACL_TLV_RECORD);
+        osmlayer_put_u16(buf + pos, rec->has_mode ? OSMLAYER_ACL_TLV_POSIX : OSMLAYER_ACL_TLV_RECORD);
         osmlayer_put_u16(buf + pos + 2u, (uint16_t)payload_len);
         pos += 4u;
         osmlayer_put_u16(buf + pos, (uint16_t)name_len);
         osmlayer_put_u16(buf + pos + 2u, (uint16_t)rec->ace_count);
         osmlayer_put_u32(buf + pos + 4u, rec->owner_uid);
         osmlayer_put_u32(buf + pos + 8u, rec->flags);
-        pos += 12u;
+        if (rec->has_mode) {
+            osmlayer_put_u32(buf + pos + 12u, rec->gid);
+            osmlayer_put_u32(buf + pos + 16u, rec->mode);
+        }
+        pos += prefix;
         for (uint32_t i = 0; i < name_len; ++i) {
             buf[pos++] = (uint8_t)rec->name[i];
         }
@@ -1420,6 +1145,10 @@ static void osmlayer_acl_add_ace(struct leonos_fs_acl *acl, uint32_t principal,
     };
 }
 
+static int osmlayer_acl_store(const char *path,
+                              const struct leonos_fs_acl *acl);
+
+
 /**
  * Osmlayer owner for path.
  * @param path NUL-terminated text supplied by the caller.
@@ -1444,6 +1173,7 @@ static uint32_t osmlayer_owner_for_path(const char *path,
     return 0;
 }
 
+
 /**
  * Osmlayer path is system tree.
  * @param path NUL-terminated text supplied by the caller.
@@ -1451,14 +1181,25 @@ static uint32_t osmlayer_owner_for_path(const char *path,
  */
 static int osmlayer_path_is_system_tree(const char *path)
 {
+    /* Read-only system locations.  /var/lib/leonos and /root are deliberately
+     * absent: account databases, license state and per-user data must not be
+     * world-readable through the default ACL.  /home itself is readable and
+     * searchable, but /home/<name> ownership is synthesized per account
+     * below. */
     return osmlayer_text_eq(path, "/") ||
            osmlayer_text_eq(path, "/boot") || osmlayer_path_under(path, "/boot") ||
-           osmlayer_text_eq(path, "/docs") || osmlayer_path_under(path, "/docs") ||
-           osmlayer_text_eq(path, "/system") || osmlayer_path_under(path, "/system") ||
-           osmlayer_text_eq(path, "/programs") || osmlayer_path_under(path, "/programs") ||
-           osmlayer_text_eq(path, "/users") ||
-           osmlayer_text_eq(path, "/var") || osmlayer_path_under(path, "/var") ||
-           osmlayer_text_eq(path, "/dev") || osmlayer_path_under(path, "/dev");
+           osmlayer_text_eq(path, "/install") || osmlayer_path_under(path, "/install") ||
+           osmlayer_text_eq(path, "/home") ||
+           osmlayer_text_eq(path, "/run") || osmlayer_path_under(path, "/run") ||
+           osmlayer_text_eq(path, "/lib") || osmlayer_path_under(path, "/lib") ||
+           osmlayer_text_eq(path, "/etc") || osmlayer_path_under(path, "/etc") ||
+           osmlayer_text_eq(path, "/usr") || osmlayer_path_under(path, "/usr") ||
+           osmlayer_text_eq(path, "/opt") || osmlayer_path_under(path, "/opt") ||
+           osmlayer_text_eq(path, "/bin") || osmlayer_path_under(path, "/bin") ||
+           osmlayer_text_eq(path, "/sbin") || osmlayer_path_under(path, "/sbin") ||
+           osmlayer_text_eq(path, "/dev") || osmlayer_path_under(path, "/dev") ||
+           osmlayer_text_eq(path, "/media") || osmlayer_path_under(path, "/media") ||
+           osmlayer_text_eq(path, "/mnt") || osmlayer_path_under(path, "/mnt");
 }
 
 /**
@@ -1484,13 +1225,14 @@ static void osmlayer_acl_default_for_path(const char *path,
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_OWNER, 0, LEONOS_FS_PERM_FULL);
         return;
     }
-    if (osmlayer_text_eq(path, "/tmp") || osmlayer_path_under(path, "/tmp")) {
+    if (osmlayer_text_eq(path, "/tmp") || osmlayer_path_under(path, "/tmp") ||
+        osmlayer_text_eq(path, "/var/tmp") || osmlayer_path_under(path, "/var/tmp")) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0, LEONOS_FS_PERM_FULL);
         return;
     }
-    if (osmlayer_text_eq(path, "/system/config/display.conf") ||
-        osmlayer_text_eq(path, "/system/config/locale.conf") ||
-        osmlayer_text_eq(path, "/system/state/oobe.done")) {
+    if (osmlayer_text_eq(path, LEONOS_PATH_DISPLAY_CONF) ||
+        osmlayer_text_eq(path, LEONOS_PATH_LOCALE_CONF) ||
+        osmlayer_text_eq(path, LEONOS_PATH_OOBE_DONE)) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0,
                              LEONOS_FS_PERM_READ | LEONOS_FS_PERM_WRITE);
         return;
@@ -1509,7 +1251,7 @@ static void osmlayer_acl_default_for_path(const char *path,
  * @param acl Destination ACL receiving the explicit or synthesized rules.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_get_explicit_or_default(const char *path,
+static __attribute__((noinline)) int osmlayer_acl_get_explicit_or_default(const char *path,
                                                 struct osmlayer_account *accounts,
                                                 uint32_t count,
                                                 struct leonos_fs_acl *acl)
@@ -1538,6 +1280,17 @@ static int osmlayer_acl_get_explicit_or_default(const char *path,
         acl->owner_uid = rec->owner_uid;
         acl->flags = rec->flags;
         acl->ace_count = rec->ace_count;
+        if (rec->has_mode) {
+            const uint32_t principals[] = {LEONOS_FS_ACL_PRINCIPAL_OWNER,
+                LEONOS_FS_ACL_PRINCIPAL_GROUP, LEONOS_FS_ACL_PRINCIPAL_EVERYONE};
+            acl->ace_count = 3;
+            for (uint32_t i = 0; i < 3; ++i) {
+                uint32_t bits = (rec->mode >> (6u - i * 3u)) & 7u;
+                acl->aces[i].principal = principals[i];
+                acl->aces[i].permissions = ((bits & 4u) >> 2) | (bits & 2u) | ((bits & 1u) << 2);
+            }
+            return 0;
+        }
         for (uint32_t i = 0; i < rec->ace_count; ++i) {
             acl->aces[i] = rec->aces[i];
         }
@@ -1553,7 +1306,8 @@ static int osmlayer_acl_get_explicit_or_default(const char *path,
  * @param acl ACL to serialize and store.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_store(const char *path, const struct leonos_fs_acl *acl)
+static __attribute__((noinline)) int osmlayer_acl_store(const char *path,
+                                                       const struct leonos_fs_acl *acl)
 {
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
@@ -1598,7 +1352,98 @@ static int osmlayer_acl_store(const char *path, const struct leonos_fs_acl *acl)
  * @param path NUL-terminated text supplied by the caller.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_remove(const char *path)
+static uint32_t osmlayer_acl_to_rwx(uint32_t bits)
+{
+    return ((bits & LEONOS_FS_PERM_READ) << 2) |
+           (bits & LEONOS_FS_PERM_WRITE) | ((bits & LEONOS_FS_PERM_EXEC) >> 2);
+}
+
+/* Version 1 records remain readable. Each record gains explicit uid/gid/mode
+ * on its first POSIX metadata write; unrelated records are preserved. */
+static __attribute__((noinline)) int osmlayer_posix_explicit(struct leonos_permissions_request *req)
+{
+    struct osmlayer_acl_dir dir;
+    char parent[LEONOS_FS_PATH_LEN], name[LEONOS_FS_NAME_LEN];
+    if (!req || (req->action != LEONOS_PERMISSIONS_GET &&
+                 req->action != LEONOS_PERMISSIONS_SET) ||
+        osmlayer_path_parent_name(req->path, parent, sizeof(parent), name, sizeof(name)) < 0) return -22;
+    int ret = osmlayer_acl_load_dir(parent, &dir);
+    if (ret < 0) return ret;
+    if (dir.corrupt) return -5;
+    int idx = osmlayer_acl_find_record(&dir, name);
+    if (req->action == LEONOS_PERMISSIONS_SET) {
+        if (idx < 0) {
+            if (dir.count == OSMLAYER_ACL_MAX_RECORDS) return -28;
+            idx = (int)dir.count++;
+        }
+        struct osmlayer_acl_record *rec = &dir.records[idx];
+        memset(rec, 0, sizeof(*rec));
+        osmlayer_copy_text(rec->name, sizeof(rec->name), name);
+        rec->owner_uid = req->value.uid;
+        rec->gid = req->value.gid;
+        rec->mode = req->value.mode & 0177777u;
+        rec->has_mode = 1;
+        return osmlayer_acl_save_dir(parent, &dir);
+    }
+    if (idx >= 0 && dir.records[idx].has_mode) {
+        const struct osmlayer_acl_record *rec = &dir.records[idx];
+        req->value = (struct leonos_permissions){rec->mode, rec->owner_uid, rec->gid};
+        return 0;
+    }
+    /* Release the large directory frame before loading the account database. */
+    if (idx < 0) return 1;
+    struct leonos_fs_acl acl = {0};
+    const struct osmlayer_acl_record *rec = &dir.records[idx];
+    acl.owner_uid = rec->owner_uid;
+    acl.ace_count = rec->ace_count;
+    for (uint32_t i = 0; i < rec->ace_count; ++i) acl.aces[i] = rec->aces[i];
+    uint32_t owner = 0, other = 0;
+    for (uint32_t i = 0; i < acl.ace_count; ++i) {
+        const struct leonos_fs_acl_ace *ace = &acl.aces[i];
+        if (ace->principal == LEONOS_FS_ACL_PRINCIPAL_OWNER ||
+            (!acl.owner_uid && ace->principal == LEONOS_FS_ACL_PRINCIPAL_SYSTEM)) owner |= ace->permissions;
+        if (ace->principal == LEONOS_FS_ACL_PRINCIPAL_USERS ||
+            ace->principal == LEONOS_FS_ACL_PRINCIPAL_EVERYONE) other |= ace->permissions;
+    }
+    owner = osmlayer_acl_to_rwx(owner | other);
+    other = osmlayer_acl_to_rwx(other);
+    req->value = (struct leonos_permissions){(owner << 6) | (other << 3) | other,
+                                           acl.owner_uid, acl.owner_uid};
+    return 0;
+}
+
+static int osmlayer_posix_permissions(struct leonos_permissions_request *req)
+{
+    int ret = osmlayer_posix_explicit(req);
+    if (ret != 1) return ret;
+    if (osmlayer_text_eq(req->path, "/etc/shadow") ||
+        osmlayer_text_eq(req->path, "/etc/gshadow")) {
+        req->value = (struct leonos_permissions){0600, 0, 0};
+        return 0;
+    }
+    uint32_t count = 0;
+    /* Ownership is stored in filesystem metadata, never inferred from account files. */
+    struct leonos_fs_acl acl = {0};
+    osmlayer_acl_default_for_path(req->path, osmlayer_auth_accounts, count, &acl);
+    uint32_t owner = 0, other = 0;
+    for (uint32_t i = 0; i < acl.ace_count; ++i) {
+        const struct leonos_fs_acl_ace *ace = &acl.aces[i];
+        if (ace->principal == LEONOS_FS_ACL_PRINCIPAL_OWNER ||
+            (!acl.owner_uid && ace->principal == LEONOS_FS_ACL_PRINCIPAL_SYSTEM)) owner |= ace->permissions;
+        if (ace->principal == LEONOS_FS_ACL_PRINCIPAL_USERS ||
+            ace->principal == LEONOS_FS_ACL_PRINCIPAL_EVERYONE) other |= ace->permissions;
+    }
+    owner = osmlayer_acl_to_rwx(owner | other);
+    other = osmlayer_acl_to_rwx(other);
+    req->value = (struct leonos_permissions){(owner << 6) | (other << 3) | other,
+                                           acl.owner_uid, acl.owner_uid};
+    if (osmlayer_text_eq(req->path, "/tmp") || osmlayer_text_eq(req->path, "/var/tmp")) {
+        req->value.mode = 01777;
+    }
+    return 0;
+}
+
+static __attribute__((noinline)) int osmlayer_acl_remove(const char *path)
 {
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
@@ -1629,7 +1474,8 @@ static int osmlayer_acl_remove(const char *path)
  * @param new_path NUL-terminated text supplied by the caller.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_rename(const char *old_path, const char *new_path)
+static __attribute__((noinline)) int osmlayer_acl_rename(const char *old_path,
+                                                        const char *new_path)
 {
     char old_parent[LEONOS_FS_PATH_LEN];
     char new_parent[LEONOS_FS_PATH_LEN];
@@ -1648,8 +1494,16 @@ static int osmlayer_acl_rename(const char *old_path, const char *new_path)
         return ret;
     }
     idx = osmlayer_acl_find_record(&dir, old_name);
+    int target = osmlayer_acl_find_record(&dir, new_name);
+    if (target == idx && idx >= 0) return 0;
+    if (target >= 0) {
+        for (uint32_t i = (uint32_t)target; i + 1u < dir.count; ++i)
+            dir.records[i] = dir.records[i + 1u];
+        --dir.count;
+        if (idx > target) --idx;
+    }
     if (idx < 0) {
-        return 0;
+        return target < 0 ? 0 : osmlayer_acl_save_dir(old_parent, &dir);
     }
     osmlayer_copy_text(dir.records[idx].name, sizeof(dir.records[idx].name), new_name);
     return osmlayer_acl_save_dir(old_parent, &dir);
@@ -1851,22 +1705,12 @@ static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
     struct osmlayer_account *accounts = osmlayer_auth_accounts;
     uint32_t count = 0;
     uint32_t needed;
-    int accounts_ret;
     if (!req || !req->path[0]) {
         return 0;
     }
     if (osmlayer_path_is_accounts_db(req->path) || osmlayer_path_is_acl_file(req->path)) {
         req->allowed = 0;
         return 0;
-    }
-    accounts_ret = osmlayer_accounts_load(accounts, &count);
-    if (accounts_ret < 0) {
-        req->allowed = 0;
-        /* Do not turn a transient storage read failure into EACCES. The
-         * kernel syscall restart path can retry EAGAIN, while a real I/O
-         * error must remain visible to the caller instead of looking like a
-         * permissions problem. */
-        return accounts_ret;
     }
     needed = osmlayer_authz_permission_bit(req->op);
     {
@@ -1894,10 +1738,7 @@ static int osmlayer_fsacl_handle(struct leonos_fs_acl_request *req)
     if (!req || !req->path[0]) {
         return -22;
     }
-    int ret = osmlayer_accounts_load(accounts, &count);
-    if (ret < 0) {
-        return ret;
-    }
+    int ret;
     if (req->action == LEONOS_FS_ACL_ACTION_GET) {
         ret = osmlayer_acl_get_explicit_or_default(req->path, accounts, count, &req->acl);
         if (ret < 0) {
@@ -1967,377 +1808,6 @@ static int osmlayer_fsacl_handle(struct leonos_fs_acl_request *req)
 }
 
 /**
- * Osmlayer ensure user dirs.
- * @param username NUL-terminated text supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_ensure_user_dirs(const char *username)
-{
-    char home[LEONOS_AUTH_HOME_LEN];
-    char child[LEONOS_AUTH_HOME_LEN + 16];
-    uint32_t pos;
-    int ret;
-    if (!osmlayer_username_valid(username)) {
-        return -22;
-    }
-    (void)osmlayer_service_mkdir("/users");
-    (void)osmlayer_service_mkdir("/tmp");
-    osmlayer_home_for_user(home, sizeof(home), username);
-    ret = osmlayer_service_mkdir(home);
-    if (ret < 0) {
-        return ret;
-    }
-    const char *subs[] = {"desktop", "documents", "downloads"};
-    for (uint32_t i = 0; i < 3; ++i) {
-        pos = 0;
-        child[0] = 0;
-        osmlayer_append_text(child, &pos, sizeof(child), home);
-        osmlayer_append_char(child, &pos, sizeof(child), '/');
-        osmlayer_append_text(child, &pos, sizeof(child), subs[i]);
-        ret = osmlayer_service_mkdir(child);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-    return 0;
-}
-
-/**
- * Osmlayer write desktop shortcut.
- * @param home Value supplied by the caller.
- * @param name NUL-terminated text supplied by the caller.
- * @param target Value supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_write_desktop_shortcut(const char *home,
-                                           const char *name,
-                                           const char *target)
-{
-    char path[LEONOS_AUTH_HOME_LEN + 48];
-    char body[160];
-    uint32_t pos = 0;
-    uint32_t body_pos = 0;
-    if (!home || !home[0] || !name || !name[0] || !target || !target[0]) {
-        return -22;
-    }
-    path[0] = 0;
-    osmlayer_append_text(path, &pos, sizeof(path), home);
-    osmlayer_append_text(path, &pos, sizeof(path), "/desktop/");
-    osmlayer_append_text(path, &pos, sizeof(path), name);
-    body[0] = 0;
-    osmlayer_append_text(body, &body_pos, sizeof(body), "# LeonOS shortcut\n");
-    osmlayer_append_text(body, &body_pos, sizeof(body), "target=");
-    osmlayer_append_text(body, &body_pos, sizeof(body), target);
-    osmlayer_append_char(body, &body_pos, sizeof(body), '\n');
-    return osmlayer_service_write_file(path, body, body_pos);
-}
-
-/**
- * @brief Reads the system language used for newly-created user resources.
- * @return Non-zero when the system locale is Chinese; English is the fallback.
- */
-static int osmlayer_system_language_is_chinese(void)
-{
-    char locale[64];
-    uint32_t length = 0;
-    int ret = osmlayer_service_read_file("/system/config/locale.conf",
-                                         locale, sizeof(locale) - 1u, &length);
-    if (ret < 0 || length == 0) {
-        return 0;
-    }
-    locale[length < sizeof(locale) ? length : sizeof(locale) - 1u] = 0;
-    for (uint32_t i = 0; i + 6u < length; ++i) {
-        if ((locale[i] == 'l' || locale[i] == 'L') &&
-            locale[i + 1] == 'a' && locale[i + 2] == 'n' &&
-            locale[i + 3] == 'g' && locale[i + 4] == '=' &&
-            locale[i + 5] == 'z' && locale[i + 6] == 'h') {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/**
- * Osmlayer seed desktop shortcuts.
- * @param username NUL-terminated text supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_seed_desktop_shortcuts(const char *username)
-{
-    char home[LEONOS_AUTH_HOME_LEN];
-    int chinese = osmlayer_system_language_is_chinese();
-    static const struct {
-        const char *name_en;
-        const char *name_zh;
-        const char *target;
-    } shortcuts[] = {
-        {"File Manager.lnk", "文件管理器.lnk", "/system/apps/fileman/fileman.elf"},
-        {"Task Manager.lnk", "任务管理器.lnk", "/system/apps/taskmgr/taskmgr.elf"},
-        {"Settings.lnk", "设置.lnk", "/system/apps/settings/settings.elf"},
-        {"Browser.lnk", "浏览器.lnk", "/programs/browser/browser.elf"},
-    };
-    if (!osmlayer_username_valid(username)) {
-        return -22;
-    }
-    osmlayer_home_for_user(home, sizeof(home), username);
-    for (uint32_t i = 0; i < sizeof(shortcuts) / sizeof(shortcuts[0]); ++i) {
-        int ret = osmlayer_write_desktop_shortcut(home,
-                                                  chinese ? shortcuts[i].name_zh
-                                                          : shortcuts[i].name_en,
-                                                  shortcuts[i].target);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-    return 0;
-}
-
-/**
- * @brief Reports whether accounts and an enabled administrator exist.
- * @param status Optional destination for the account summary.
- * @return Zero on success, or the account database read error.
- */
-static int osmlayer_auth_status(struct leonos_auth_status *status)
-{
-    struct osmlayer_account *accounts = osmlayer_auth_accounts;
-    uint32_t count = 0;
-    int ret = osmlayer_accounts_load(accounts, &count);
-    if (ret < 0) {
-        return ret;
-    }
-    (void)osmlayer_service_mkdir("/system/state");
-    (void)osmlayer_service_mkdir("/users");
-    (void)osmlayer_service_mkdir("/tmp");
-    if (status) {
-        status->user_count = count;
-        status->has_admin = osmlayer_account_enabled_admin_count(accounts, count) > 0 ? 1u : 0u;
-        status->reserved0 = 0;
-        status->reserved1 = 0;
-    }
-    return 0;
-}
-
-/**
- * Osmlayer auth list.
- * @param list Value supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_auth_list(struct leonos_user_list *list)
-{
-    struct osmlayer_account *accounts = osmlayer_auth_accounts;
-    uint32_t count = 0;
-    uint32_t out = 0;
-    int ret = osmlayer_accounts_load(accounts, &count);
-    if (ret < 0) {
-        return ret;
-    }
-    if (!list) {
-        return -22;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!accounts[i].used) {
-            continue;
-        }
-        if ((accounts[i].flags & LEONOS_AUTH_USER_DISABLED) &&
-            !(list->actor_role == LEONOS_AUTH_ROLE_ADMIN && list->include_disabled)) {
-            continue;
-        }
-        if (list->users && out < list->capacity) {
-            osmlayer_fill_user_info(&list->users[out], &accounts[i]);
-        }
-        ++out;
-    }
-    list->count = out;
-    return 0;
-}
-
-/**
- * Osmlayer auth login.
- * @param login Value supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_auth_login(struct leonos_auth_login *login)
-{
-    struct osmlayer_account *accounts = osmlayer_auth_accounts;
-    uint32_t count = 0;
-    uint8_t hash[32];
-    int ret;
-    int index;
-    if (!login || !osmlayer_username_valid(login->username) ||
-        !osmlayer_password_valid(login->password)) {
-        return -22;
-    }
-    ret = osmlayer_accounts_load(accounts, &count);
-    if (ret < 0) {
-        return ret;
-    }
-    index = osmlayer_find_account_by_name(accounts, count, login->username);
-    if (index < 0 || (accounts[index].flags & LEONOS_AUTH_USER_DISABLED)) {
-        return -13;
-    }
-    osmlayer_hash_password(accounts[index].salt, login->password, hash);
-    if (memcmp(hash, accounts[index].hash, sizeof(hash)) != 0) {
-        return -13;
-    }
-    ret = osmlayer_ensure_user_dirs(accounts[index].username);
-    if (ret < 0) {
-        return ret;
-    }
-    osmlayer_fill_user_info(&login->user, &accounts[index]);
-    return 0;
-}
-
-/**
- * Osmlayer auth create.
- * @param create Value supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_auth_create(struct leonos_auth_create *create)
-{
-    struct osmlayer_account *accounts = osmlayer_auth_accounts;
-    uint32_t count = 0;
-    uint32_t next_uid = 1;
-    int ret;
-    int has_admin;
-    if (!create || !osmlayer_username_valid(create->username) ||
-        !osmlayer_password_valid(create->password) ||
-        (create->role != LEONOS_AUTH_ROLE_ADMIN &&
-         create->role != LEONOS_AUTH_ROLE_USER)) {
-        return -22;
-    }
-    ret = osmlayer_accounts_load(accounts, &count);
-    if (ret < 0) {
-        return ret;
-    }
-    has_admin = osmlayer_account_enabled_admin_count(accounts, count) > 0;
-    if (has_admin && create->actor_role != LEONOS_AUTH_ROLE_ADMIN) {
-        return -1;
-    }
-    if (!has_admin && create->role != LEONOS_AUTH_ROLE_ADMIN) {
-        return -1;
-    }
-    if (count >= LEONOS_AUTH_MAX_USERS ||
-        osmlayer_find_account_by_name(accounts, count, create->username) >= 0) {
-        return -17;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        if (accounts[i].uid >= next_uid) {
-            next_uid = accounts[i].uid + 1u;
-        }
-    }
-    struct osmlayer_account *account = &accounts[count];
-    memset(account, 0, sizeof(*account));
-    account->used = 1;
-    account->uid = next_uid;
-    account->role = create->role;
-    account->flags = 0;
-    osmlayer_copy_text(account->username, sizeof(account->username), create->username);
-    osmlayer_make_salt(account->salt, create->username, create->password, account->uid);
-    osmlayer_hash_password(account->salt, create->password, account->hash);
-    ret = osmlayer_ensure_user_dirs(account->username);
-    if (ret < 0) {
-        return ret;
-    }
-    ret = osmlayer_seed_desktop_shortcuts(account->username);
-    if (ret < 0) {
-        return ret;
-    }
-    ret = osmlayer_accounts_save(accounts, count + 1u);
-    if (ret < 0) {
-        return ret;
-    }
-    osmlayer_fill_user_info(&create->user, account);
-    return 0;
-}
-
-/**
- * Osmlayer auth update.
- * @param update Value supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_auth_update(struct leonos_auth_update *update)
-{
-    struct osmlayer_account *accounts = osmlayer_auth_accounts;
-    uint32_t count = 0;
-    uint32_t new_role;
-    uint32_t new_flags;
-    int ret;
-    int index;
-    int admin_count;
-    if (!update || update->actor_role != LEONOS_AUTH_ROLE_ADMIN) {
-        return -1;
-    }
-    ret = osmlayer_accounts_load(accounts, &count);
-    if (ret < 0) {
-        return ret;
-    }
-    index = osmlayer_find_account_by_uid(accounts, count, update->uid);
-    if (index < 0) {
-        return -2;
-    }
-    new_role = (update->mask & LEONOS_AUTH_UPDATE_ROLE) ? update->role : accounts[index].role;
-    new_flags = (update->mask & LEONOS_AUTH_UPDATE_FLAGS) ? update->flags : accounts[index].flags;
-    if (new_role != LEONOS_AUTH_ROLE_ADMIN && new_role != LEONOS_AUTH_ROLE_USER) {
-        return -22;
-    }
-    if (update->uid == update->actor_uid &&
-        (new_role != LEONOS_AUTH_ROLE_ADMIN || (new_flags & LEONOS_AUTH_USER_DISABLED))) {
-        return -1;
-    }
-    admin_count = osmlayer_account_enabled_admin_count(accounts, count);
-    if (accounts[index].role == LEONOS_AUTH_ROLE_ADMIN &&
-        !(accounts[index].flags & LEONOS_AUTH_USER_DISABLED) &&
-        (new_role != LEONOS_AUTH_ROLE_ADMIN || (new_flags & LEONOS_AUTH_USER_DISABLED)) &&
-        admin_count <= 1) {
-        return -1;
-    }
-    accounts[index].role = new_role;
-    accounts[index].flags = new_flags & LEONOS_AUTH_USER_DISABLED;
-    return osmlayer_accounts_save(accounts, count);
-}
-
-/**
- * Osmlayer auth change password.
- * @param password NUL-terminated text supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int osmlayer_auth_change_password(struct leonos_auth_password *password)
-{
-    struct osmlayer_account *accounts = osmlayer_auth_accounts;
-    uint32_t count = 0;
-    uint8_t old_hash[32];
-    int ret;
-    int index;
-    if (!password || !osmlayer_password_valid(password->new_password)) {
-        return -22;
-    }
-    ret = osmlayer_accounts_load(accounts, &count);
-    if (ret < 0) {
-        return ret;
-    }
-    index = osmlayer_find_account_by_uid(accounts, count, password->uid);
-    if (index < 0) {
-        return -2;
-    }
-    if (password->actor_role != LEONOS_AUTH_ROLE_ADMIN ||
-        password->actor_uid == password->uid) {
-        if (password->actor_uid != password->uid ||
-            !osmlayer_password_valid(password->old_password)) {
-            return -1;
-        }
-        osmlayer_hash_password(accounts[index].salt, password->old_password, old_hash);
-        if (memcmp(old_hash, accounts[index].hash, sizeof(old_hash)) != 0) {
-            return -13;
-        }
-    }
-    osmlayer_make_salt(accounts[index].salt, accounts[index].username,
-                       password->new_password, accounts[index].uid);
-    osmlayer_hash_password(accounts[index].salt, password->new_password,
-                           accounts[index].hash);
-    return osmlayer_accounts_save(accounts, count);
-}
-
-/**
  * Osmlayer path is accounts db.
  * @param path NUL-terminated text supplied by the caller.
  * @return The value or status produced by the operation.
@@ -2386,22 +1856,13 @@ static int osmlayer_auth_authorize(struct leonos_authz_request *req)
 int osmlayer_c_auth_op(uint32_t op, void *arg)
 {
     switch (op) {
-    case LEONOS_AUTH_OP_STATUS:
-        return osmlayer_auth_status((struct leonos_auth_status *)arg);
-    case LEONOS_AUTH_OP_LIST_USERS:
-        return osmlayer_auth_list((struct leonos_user_list *)arg);
-    case LEONOS_AUTH_OP_LOGIN:
-        return osmlayer_auth_login((struct leonos_auth_login *)arg);
-    case LEONOS_AUTH_OP_CREATE_USER:
-        return osmlayer_auth_create((struct leonos_auth_create *)arg);
-    case LEONOS_AUTH_OP_UPDATE_USER:
-        return osmlayer_auth_update((struct leonos_auth_update *)arg);
-    case LEONOS_AUTH_OP_CHANGE_PASSWORD:
-        return osmlayer_auth_change_password((struct leonos_auth_password *)arg);
+    /* Account and password operations belong exclusively to userspace PAM/shadow. */
     case LEONOS_AUTH_OP_AUTHORIZE:
         return osmlayer_auth_authorize((struct leonos_authz_request *)arg);
     case LEONOS_AUTH_OP_FSPERM:
         return osmlayer_fsacl_handle((struct leonos_fs_acl_request *)arg);
+    case LEONOS_AUTH_OP_POSIX_PERMISSIONS:
+        return osmlayer_posix_permissions((struct leonos_permissions_request *)arg);
     default:
         return -38;
     }
@@ -2675,8 +2136,8 @@ int osmlayer_c_services_selftest(void)
 {
     char path[OSMLAYER_FS_PATH_LEN];
     struct osmlayer_vfs_resolve_path vfs = {
-        .cwd = "/system/config",
-        .input = "../apps/desktop/desktop.elf",
+        .cwd = LEONOS_LAYOUT_ETC_LEONOS,
+        .input = "../../usr/lib/leonos/apps/desktop/desktop.elf",
         .out = path,
         .capacity = sizeof(path),
         .node_kind = 0,
@@ -2684,7 +2145,7 @@ int osmlayer_c_services_selftest(void)
         .reserved = 0,
     };
     if (osmlayer_resolve_path(&vfs) < 0 ||
-        !osmlayer_text_eq(path, "/system/apps/desktop/desktop.elf")) {
+        !osmlayer_text_eq(path, LEONOS_LAYOUT_LEONOS_APPS "/desktop/desktop.elf")) {
         return 0;
     }
 

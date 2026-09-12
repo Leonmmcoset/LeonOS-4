@@ -1,3 +1,4 @@
+#include <leonos/layout.h>
 /* LeonOS build-time configuration for upstream less. */
 #ifndef LEONOS_LESS_DEFINES_H
 #define LEONOS_LESS_DEFINES_H
@@ -28,9 +29,9 @@
 #define GNU_OPTIONS 1
 #define ONLY_RETURN 0
 #define LESSKEYFILE ".less"
-#define LESSKEYFILE_SYS "/system/config/lesskey"
+#define LESSKEYFILE_SYS LEONOS_PATH_LESSKEY
 #define DEF_LESSKEYINFILE ".lesskey"
-#define LESSKEYINFILE_SYS "/system/config/lesskey"
+#define LESSKEYINFILE_SYS LEONOS_PATH_LESSKEY
 #define LESSHISTFILE ".lesshst"
 
 #define DEF_METACHARS "; *?\t\n'\"()<>|&"
@@ -127,9 +128,5 @@
 #define HAVE_USLEEP 1
 #define HAVE_SYS_WAIT_H 0
 
-/* Picolibc's freestanding limits.h omits ULONG_MAX for this target. */
-#ifndef ULONG_MAX
-#define ULONG_MAX (LONG_MAX * 2UL + 1UL)
-#endif
 
 #endif

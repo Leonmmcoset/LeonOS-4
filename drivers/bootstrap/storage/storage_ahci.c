@@ -25,6 +25,9 @@ static int ahci_async_fast_poll_idle(struct ahci_hba_port *port)
 static int ahci_async_fast_poll_command(struct ahci_hba_port *port)
 {
     for (uint32_t i = 0; i < AHCI_ASYNC_FAST_POLL_SPINS; ++i) {
+        if (port->is & AHCI_PORT_IS_TFES) {
+            return -5;
+        }
         if ((port->ci & 1u) == 0) {
             return 0;
         }
@@ -98,10 +101,14 @@ static int ahci_pending_poll(void)
     if (!ahci_pending_command.active || !port) {
         return -22;
     }
+    /* An aborted ATAPI command may report TFES with PxCI still set. */
+    if (port->is & AHCI_PORT_IS_TFES) {
+        goto command_complete;
+    }
     if ((port->ci & 1u) != 0) {
         if (storage_async_can_yield()) {
             int poll_ret = ahci_async_fast_poll_command(port);
-            if (poll_ret == 0) {
+            if (poll_ret != -LEONOS_EAGAIN) {
                 goto command_complete;
             }
             if (time_ticks() - ahci_pending_command.start_tick >=
@@ -116,6 +123,9 @@ static int ahci_pending_poll(void)
             return -LEONOS_EAGAIN;
         }
         for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
+            if (port->is & AHCI_PORT_IS_TFES) {
+                goto command_complete;
+            }
             if ((port->ci & 1u) == 0) {
                 break;
             }
@@ -477,6 +487,36 @@ static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sec
     return ahci_pending_poll();
 }
 
+static int ahci_flush_cache(struct ahci_hba_port *port)
+{
+    if (!port) return -19;
+    if (ahci_pending_command.active) {
+        int ret = ahci_pending_poll();
+        if (ret < 0) return ret;
+    }
+    if (ahci_wait_idle(port) < 0 || ahci_wait_cmd_slot(port) < 0) return -5;
+    struct ahci_cmd_header *header = &ahci_cmd_headers[0];
+    header->flags = sizeof(struct fis_reg_h2d) / sizeof(uint32_t);
+    header->prdtl = 0;
+    header->prdbc = 0;
+    struct ahci_cmd_table *table = (void *)ahci_cmd_table_buf;
+    storage_memzero(table, sizeof(ahci_cmd_table_buf));
+    struct fis_reg_h2d *fis = (void *)table->cfis;
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->c = 1;
+    fis->command = 0xe7; /* ATA FLUSH CACHE, non-data command. */
+    port->is = 0xffffffffu;
+    ahci_memory_barrier();
+    port->ci = 1u;
+    storage_memzero(&ahci_pending_command, sizeof(ahci_pending_command));
+    ahci_pending_command.port = port;
+    ahci_pending_command.owner_pid = sched_current_pid();
+    ahci_pending_command.start_tick = time_ticks();
+    ahci_pending_command.write = 1;
+    ahci_pending_command.active = 1;
+    return ahci_pending_poll();
+}
+
 static int ahci_read_lba_retry(struct ahci_hba_port *port, uint64_t lba,
                                uint32_t sector_count, void *buffer)
 {
@@ -517,4 +557,3 @@ static int ahci_write_lba_retry(struct ahci_hba_port *port, uint64_t lba,
     }
     return ret;
 }
-

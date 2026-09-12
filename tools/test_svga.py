@@ -19,7 +19,7 @@ class SvgaTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-g",
                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                "-DSVGA_HOST_TEST", "-Ikernel/ntclks/include", "-Iinclude",
+                "-DSVGA_HOST_TEST", "-Ikernel/ntclks/include", "-Iinclude", "-Iinclude/uapi",
                 "-Idrivers/bootstrap/svga", "tools/tests/svga_test.c",
                 *(str(path) for path in SOURCES), "-o", str(executable),
             ], cwd=ROOT, check=True)
@@ -45,7 +45,7 @@ class SvgaTests(unittest.TestCase):
                             "-std=c11", "-ffreestanding", "-fno-stack-protector",
                             "-fno-pic", "-fno-pie", "-mno-red-zone", "-mcmodel=kernel",
                             "-mgeneral-regs-only", "-Wall", "-Wextra", "-Werror",
-                            "-Ikernel/ntclks/include", "-Iinclude", "-c", str(source),
+                            "-Ikernel/ntclks/include", "-Iinclude", "-Iinclude/uapi", "-c", str(source),
                             "-o", str(obj),
                         ], cwd=ROOT, check=True)
                         objects.append(str(obj))

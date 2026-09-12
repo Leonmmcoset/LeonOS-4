@@ -1,41 +1,31 @@
-/*
-Copyright (c) 1991, 1993
-The Regents of the University of California.  All rights reserved.
-All or some portions of this file are derived from material licensed
-to the University of California by American Telephone and Telegraph
-Co. or Unix System Laboratories, Inc. and are reproduced herein with
-the permission of UNIX System Laboratories, Inc.
+#ifndef _PATHS_H
+#define _PATHS_H
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-1. Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-3. Neither the name of the University nor the names of its contributors
-may be used to endorse or promote products derived from this software
-without specific prior written permission.
+#define	_PATH_DEFPATH "/usr/local/bin:/bin:/usr/bin"
+#define	_PATH_STDPATH "/bin:/usr/bin:/sbin:/usr/sbin"
 
-THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGE.
- */
-#ifndef _PATHS_H_
-#define _PATHS_H_
+#define	_PATH_BSHELL	"/bin/sh"
+#define	_PATH_CONSOLE	"/dev/console"
+#define	_PATH_DEVNULL	"/dev/null"
+#define	_PATH_KLOG	"/proc/kmsg"
+#define	_PATH_LASTLOG	"/var/log/lastlog"
+#define	_PATH_MAILDIR	"/var/mail"
+#define	_PATH_MAN	"/usr/share/man"
+#define	_PATH_MNTTAB	"/etc/fstab"
+#define	_PATH_MOUNTED	"/etc/mtab"
+#define	_PATH_NOLOGIN	"/etc/nologin"
+#define	_PATH_SENDMAIL	"/usr/sbin/sendmail"
+#define	_PATH_SHADOW	"/etc/shadow"
+#define	_PATH_SHELLS	"/etc/shells"
+#define	_PATH_TTY	"/dev/tty"
+#define _PATH_UTMP	"/dev/null/utmp"
+#define	_PATH_VI	"/usr/bin/vi"
+#define _PATH_WTMP	"/dev/null/wtmp"
 
-#define _PATH_DEV     "/dev/"
-#define _PATH_DEVNULL "/dev/null"
-#define _PATH_DEVZERO "/dev/zero"
-#define _PATH_BSHELL  "/bin/sh"
+#define	_PATH_DEV	"/dev/"
+#define	_PATH_TMP	"/tmp/"
+#define	_PATH_VARDB	"/var/lib/misc/"
+#define	_PATH_VARRUN	"/var/run/"
+#define	_PATH_VARTMP	"/var/tmp/"
 
-#endif /* _PATHS_H_ */
+#endif

@@ -1,12 +1,13 @@
 /* Phase 0 Unix-IPC self test: blocking socketpair, SCM_RIGHTS, shm mmap,
  * uid syscalls, and a tolerant AF_INET connect probe. Run from the LeonOS
- * shell as /programs/ipctest/ipctest.elf. */
+ * shell as /usr/lib/leonos/apps/ipctest/ipctest.elf. */
 #include <errno.h>
+#include <fcntl.h>
 #include <leonos/device.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <linux/input.h>
-#include <linux/utsname.h>
+#include <sys/utsname.h>
 #include <stdint.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -38,7 +39,11 @@ int main(void)
         failures += !check(0, "socketpair");
         return failures ? 1 : 0;
     }
-    failures += !check(sockets[0] >= 4 && sockets[1] >= 4, "socketpair");
+    /* Native Linux allows fd 3 and reused standard descriptors. Validate the
+     * allocated objects, rather than the retired LeonOS reserved-fd range. */
+    failures += !check(sockets[0] >= 0 && sockets[1] >= 0 && sockets[0] != sockets[1] &&
+                       fcntl(sockets[0], F_GETFD) == 0 && fcntl(sockets[1], F_GETFD) == 0,
+                       "socketpair");
 
     int pid = (int)fork();
     if (pid == 0) {
@@ -55,7 +60,7 @@ int main(void)
     (void)waitpid(pid, 0, 0);
 
     shm_fd = open(LEONOS_DEV_SHM0, LEONOS_O_RDWR, 0);
-    failures += !check(shm_fd >= 4, "open /dev/shm0");
+    failures += !check(shm_fd >= 0 && fcntl(shm_fd, F_GETFD) == 0, "open /dev/shm0");
     failures += !check(ftruncate(shm_fd, 4096) == 0, "shm ftruncate");
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0) {
@@ -92,7 +97,8 @@ int main(void)
         received_shm = header && received.msg_controllen >= sizeof(*header) &&
                                header->cmsg_type == SCM_RIGHTS
                            ? *(int *)CMSG_DATA(header) : -1;
-        failures += !check(received_shm >= 4, "recvmsg SCM_RIGHTS fd");
+        failures += !check(received_shm >= 0 && fcntl(received_shm, F_GETFD) == 0,
+                           "recvmsg SCM_RIGHTS fd");
         close(sockets[0]);
         close(sockets[1]);
     } else {

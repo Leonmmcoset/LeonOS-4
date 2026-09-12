@@ -7,6 +7,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <leonos/layout.h>
 
 #define RUN_W 360
 #define RUN_H 148
@@ -14,7 +15,7 @@
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[RUN_W * RUN_H];
-static char input_path[PATH_MAX_LEN] = "/programs/";
+static char input_path[PATH_MAX_LEN] = LEONOS_LAYOUT_LEONOS_APPS "/";
 static char status_text[96];
 static struct leonos_ui_edit_state input_edit;
 

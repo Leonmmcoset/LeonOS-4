@@ -3,14 +3,17 @@
 
 #include <stdint.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 
 #define LEONOS_IPC_MAGIC 0x554e4c4cU /* 'LNXU' */
 #define LEONOS_IPC_VERSION 1U
+/* Maximum encoded frame size. The reader preserves partial frames and the
+ * sender handles short writes; SOCK_STREAM has no atomic frame boundary. */
+#define LEONOS_IPC_ATOMIC_FRAME_CAP 8192u
 
 #define LEONOS_IPC_SOCK_WINDOWD "/run/leonos/windowd.sock"
 #define LEONOS_IPC_SOCK_INPUT_METHOD "/run/leonos/input-method.sock"
 #define LEONOS_IPC_SOCK_NET "/run/leonos/net.sock"
-#define LEONOS_IPC_SOCK_AUTH "/run/leonos/authd.sock"
 #define LEONOS_IPC_SOCK_SESSION "/run/leonos/session.sock"
 #define LEONOS_IPC_SOCK_DEVICE "/run/leonos/devman.sock"
 
@@ -22,6 +25,7 @@ struct leonos_ipc_frame {
 
 int leonos_ipc_connect(const char *path);
 int leonos_ipc_bind_listen(const char *path, int backlog);
+int leonos_ipc_bind_listen_mode(const char *path, int backlog, uint32_t mode);
 int leonos_ipc_accept(int listen_fd, struct ucred *peer);
 int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length);
 int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload,
@@ -30,6 +34,10 @@ int leonos_ipc_recv(int fd, uint32_t *type, void *payload, uint32_t capacity,
                     uint32_t *length);
 int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
                        uint32_t *length, int *received_fd);
+/* Requires SO_PASSCRED before receiving. Every fragment must carry exactly
+ * the expected kernel-supplied credentials; partial-frame retries preserve it. */
+int leonos_ipc_recv_cred_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
+                           uint32_t *length, int *received_fd, const struct ucred *expected);
 int leonos_ipc_set_nonblock(int fd, int enabled);
 int leonos_ipc_peer_credentials(int fd, struct ucred *credentials);
 int leonos_ipc_close(int fd);

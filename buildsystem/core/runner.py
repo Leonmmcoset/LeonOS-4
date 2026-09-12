@@ -444,6 +444,21 @@ def root_relative(root: Path, path: Path) -> str:
         return str(path)
 
 
+def artifact_mtime(path: Path) -> int:
+    """Track link replacement and, when present, target content changes.
+
+    Guest rootfs links such as /etc/mtab deliberately have no host-side target.
+    Their lstat is still an actual build output, not a missing file.
+    """
+    modified = path.lstat().st_mtime_ns
+    if path.is_symlink():
+        try:
+            modified = max(modified, path.stat().st_mtime_ns)
+        except FileNotFoundError:
+            pass
+    return modified
+
+
 def normalized_path(root: Path, value: Path | str) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -527,6 +542,10 @@ class ActionContext:
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
+        # Preserve executable bits and read-only metadata for staged runtime
+        # files.  copyfile() alone creates every destination with the process
+        # umask, turning ELF files into 0644 and making execve return EACCES.
+        shutil.copymode(source, destination)
 
     def detail(self, text: str) -> None:
         self.runner.logger.detail(f"<{self.worker_id}> {self.target.name}: {text}")
@@ -813,8 +832,8 @@ class BuildRunner:
                 target.action(context)
             else:
                 raise BuildFailure(f"target {target.name} has no action")
-            if target.outputs and any(not output.exists() for output in target.outputs):
-                missing = next(output for output in target.outputs if not output.exists())
+            if target.outputs and any(not (output.exists() or output.is_symlink()) for output in target.outputs):
+                missing = next(output for output in target.outputs if not (output.exists() or output.is_symlink()))
                 raise BuildFailure(f"target {target.name} did not create {root_relative(self.paths.root, missing)}")
             self._refresh_mtimes((*target.outputs, target.depfile))
             self._write_target_state(target)
@@ -927,7 +946,7 @@ class BuildRunner:
             if path in self._mtime_cache:
                 return self._mtime_cache[path]
         try:
-            value = path.stat().st_mtime_ns
+            value = artifact_mtime(path)
         except OSError:
             value = None
         with self._mtime_lock:
@@ -940,7 +959,7 @@ class BuildRunner:
                 continue
             normalized = normalized_path(self.paths.root, path)
             try:
-                value = normalized.stat().st_mtime_ns
+                value = artifact_mtime(normalized)
             except OSError:
                 value = None
             with self._mtime_lock:

@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <leonos/layout.h>
 
 /* Fixed configuration for the LeonOS static terminal port of GNU nano. */
 #define PACKAGE "nano"
@@ -15,8 +16,8 @@
 #define PACKAGE_VERSION "9.2"
 #define PACKAGE_STRING "GNU nano 9.2"
 #define VERSION "9.2"
-#define LOCALEDIR "/system/locale"
-#define SYSCONFDIR "/system/config"
+#define LOCALEDIR LEONOS_LAYOUT_LOCALE
+#define SYSCONFDIR LEONOS_LAYOUT_ETC_LEONOS
 
 #define HAVE_LIMITS_H 1
 #define HAVE_NCURSES_H 1

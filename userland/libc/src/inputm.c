@@ -19,7 +19,11 @@
 #define INPUTM_RESULT_QUEUE 32U
 #define INPUTM_KEY_QUEUE 32U
 #define INPUTM_FRAME_CAP 4096U
-#define INPUTM_CONNECT_RETRY_MS 5000u
+/* Short per-call retry plus backoff: a daemon that is still starting is
+ * absorbed, while a daemon that never exists (installer images) must not
+ * make callers stall for seconds. */
+#define INPUTM_CONNECT_ATTEMPT_MS 50u
+#define INPUTM_CONNECT_BACKOFF_MS 1000u
 
 struct inputm_pending_commit {
     uint8_t used;
@@ -35,6 +39,7 @@ static uint8_t inputm_taken_keycode;
 static uint8_t inputm_taken_key_pressed;
 static uint32_t inputm_current_window_id;
 static int imd_fd = -1;
+static uint32_t imd_retry_after_ms;
 static struct leonos_inputm_result inputm_results[INPUTM_RESULT_QUEUE];
 static uint32_t inputm_result_head;
 static uint32_t inputm_result_tail;
@@ -95,6 +100,13 @@ static int inputm_wait_frame(uint32_t expected, void *payload, uint32_t capacity
                 if (length) *length = got;
                 return 0;
             }
+            if (type == LEONOS_IMD_MSG_ACK) {
+                struct leonos_imd_ack ack;
+                if (got < sizeof(ack)) { errno = EPROTO; return -1; }
+                memcpy(&ack, buffer, sizeof(ack));
+                errno = ack.code < 0 && ack.code >= -4095 ? -ack.code : EPROTO;
+                return -1;
+            }
             if (type == LEONOS_IMD_MSG_RESULT && got >= sizeof(struct leonos_inputm_result)) {
                 struct leonos_inputm_result result;
                 memcpy(&result, buffer, sizeof(result));
@@ -107,7 +119,7 @@ static int inputm_wait_frame(uint32_t expected, void *payload, uint32_t capacity
                 inputm_key_head = (inputm_key_head + 1u) % INPUTM_KEY_QUEUE;
             }
         }
-        if (inputm_now_ms() >= deadline) return -1;
+        if (inputm_now_ms() >= deadline) { errno = ETIMEDOUT; return -1; }
         (void)poll(0, 0, 2);
     }
 }
@@ -141,15 +153,20 @@ static int inputm_pump(void)
 
 static int inputm_open_connection(void)
 {
-    uint32_t deadline = inputm_now_ms() + INPUTM_CONNECT_RETRY_MS;
+    uint32_t deadline;
     struct leonos_imd_hello hello;
     struct leonos_imd_ack ack;
     if (imd_fd >= 0) return imd_fd;
+    if (inputm_now_ms() < imd_retry_after_ms) return -1;
+    deadline = inputm_now_ms() + INPUTM_CONNECT_ATTEMPT_MS;
     while (imd_fd < 0 && inputm_now_ms() < deadline) {
         imd_fd = leonos_ipc_connect(LEONOS_IPC_SOCK_INPUT_METHOD);
         if (imd_fd < 0) (void)poll(0, 0, 10);
     }
-    if (imd_fd < 0) return -1;
+    if (imd_fd < 0) {
+        imd_retry_after_ms = inputm_now_ms() + INPUTM_CONNECT_BACKOFF_MS;
+        return -1;
+    }
     (void)leonos_ipc_set_nonblock(imd_fd, 1);
     hello.pid = (uint32_t)getpid();
     hello.role = imd_role;
@@ -158,6 +175,7 @@ static int inputm_open_connection(void)
         ack.code < 0) {
         leonos_ipc_close(imd_fd);
         imd_fd = -1;
+        imd_retry_after_ms = inputm_now_ms() + INPUTM_CONNECT_BACKOFF_MS;
         return -1;
     }
     return imd_fd;

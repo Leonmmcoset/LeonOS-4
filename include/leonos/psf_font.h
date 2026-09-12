@@ -3,11 +3,13 @@
 
 #include <stdint.h>
 
+#include <leonos/layout.h>
+
 #include <leonos/lat15_vga16_psf.inc>
 
 #define LEONOS_FONT_W 8u
 #define LEONOS_FONT_H 16u
-#define LEONOS_SYSTEM_FONT_PATH "/system/fonts/system.psf"
+#define LEONOS_SYSTEM_FONT_PATH LEONOS_PATH_SYSTEM_FONT
 
 struct leonos_psf_view {
     const uint8_t *glyphs;

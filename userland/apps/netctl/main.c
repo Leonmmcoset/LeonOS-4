@@ -6,14 +6,15 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <leonos/layout.h>
 
 #define NETCTL_W 720
 #define NETCTL_H 584
 #define DOMAIN_LEN NET_SERVICE_HOSTNAME_LEN
 #define DNS_INPUT_LEN 16U
-#define NETCTL_NETWORK_CONFIG_PATH "/system/config/network.conf"
-#define NETCTL_NETWORK_CONFIG_TEMP_PATH "/system/config/network.conf.tmp"
-#define NETCTL_NETWORK_CONFIG_BACKUP_PATH "/system/config/network.conf.bak"
+#define NETCTL_NETWORK_CONFIG_PATH LEONOS_PATH_NETWORK_CONF
+#define NETCTL_NETWORK_CONFIG_TEMP_PATH LEONOS_PATH_NETWORK_TMP
+#define NETCTL_NETWORK_CONFIG_BACKUP_PATH LEONOS_PATH_NETWORK_BAK
 #define NETCTL_SAVE_RETRIES 3U
 #define CONN_VISIBLE_ROWS 4U
 #define CONN_ROW_H (LEONOS_FONT_H + 4U)
@@ -392,7 +393,7 @@ static int save_dns_policy(uint32_t mode, uint32_t custom_dns_ip)
             unlink(NETCTL_NETWORK_CONFIG_BACKUP_PATH);
         }
         fd = open(NETCTL_NETWORK_CONFIG_TEMP_PATH,
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
         if (fd >= 0) {
             wrote = write(fd, config_text, pos);
             if (close(fd) == 0 && wrote == (long)pos) {

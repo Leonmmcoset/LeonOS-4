@@ -1,56 +1,61 @@
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
 #include <leonos/admin.h>
-#include <leonos/auth.h>
-#include <leonos/i18n.h>
-#include <leonos/ui.h>
+#include <leonos/sudo.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-#define T(en, zh) leonos_i18n((en), (zh))
-
-static void admin_clear_secret(char *text, uint32_t len)
-{
-    volatile char *p = (volatile char *)text;
-    while (len) {
-        *p++ = 0;
-        --len;
-    }
-}
-
+/* An existing process cannot acquire identity from a password cache.
+ * Relaunch its exact command through sudo; privileged work runs in that process. */
 int leonos_admin_elevate(void)
 {
-    struct leonos_user_info user;
-    char username[LEONOS_AUTH_USERNAME_LEN];
-    char password[LEONOS_AUTH_PASSWORD_LEN];
-    int ret;
-
-    if (leonos_auth_current(&user) == 0 &&
-        user.role == LEONOS_AUTH_ROLE_ADMIN) {
-        return 1;
+    if (geteuid() == 0) return 1;
+    size_t size = 256;
+    char *path = NULL;
+    for (;;) {
+        char *grown = realloc(path, size);
+        if (!grown) { free(path); return 0; }
+        path = grown;
+        ssize_t n = readlink("/proc/self/exe", path, size - 1);
+        if (n < 0) { free(path); return 0; }
+        if ((size_t)n < size - 1) { path[n] = 0; break; }
+        if (size > SIZE_MAX / 2) { free(path); errno = E2BIG; return 0; }
+        size *= 2;
     }
-
-    memset(username, 0, sizeof(username));
-    memset(password, 0, sizeof(password));
-
-    if (leonos_ui_show_input_dialog(
-            T("Administrator Elevation", "管理员权限提升"),
-            T("Enter an administrator username:",
-              "请输入管理员用户名："),
-            username, sizeof(username)) != 1 || !username[0]) {
-        admin_clear_secret(username, sizeof(username));
-        admin_clear_secret(password, sizeof(password));
-        return 0;
+    int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) { free(path); return 0; }
+    char *data = NULL;
+    size_t used = 0;
+    for (;;) {
+        if (used > SIZE_MAX - 4096) { errno = E2BIG; break; }
+        char *grown = realloc(data, used + 4096);
+        if (!grown) break;
+        data = grown;
+        ssize_t n = read(fd, data + used, 4096);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) break;
+        if (!n) {
+            if (!used || data[used - 1]) { errno = EIO; break; }
+            size_t count = 0;
+            for (size_t i = 0; i < used; ++i) if (!data[i]) ++count;
+            char **args = calloc(count + 1, sizeof(*args));
+            if (!args) break;
+            size_t index = 0;
+            for (size_t i = 0; i < used;) {
+                args[index++] = data + i;
+                i += strlen(data + i) + 1;
+            }
+            args[0] = path;
+            uint32_t pid;
+            if (leonos_sudo_run(NULL, NULL, args, &pid) == 0) errno = EINPROGRESS;
+            free(args);
+            break;
+        }
+        used += (size_t)n;
     }
-    if (leonos_ui_show_password_dialog(
-            T("Administrator Elevation", "管理员权限提升"),
-            T("Enter the administrator password:",
-              "请输入管理员密码："),
-            password, sizeof(password)) != 1 || !password[0]) {
-        admin_clear_secret(username, sizeof(username));
-        admin_clear_secret(password, sizeof(password));
-        return 0;
-    }
-
-    ret = leonos_auth_elevate_admin(username, password, &user);
-    admin_clear_secret(password, sizeof(password));
-    admin_clear_secret(username, sizeof(username));
-    return ret == 0 && user.role == LEONOS_AUTH_ROLE_ADMIN ? 1 : 0;
+    int error = errno;
+    close(fd); free(data); free(path); errno = error;
+    return 0;
 }

@@ -16,6 +16,8 @@ enum leonos_windowd_msg {
     LEONOS_WIN_MSG_UPDATE = 24,
     LEONOS_WIN_MSG_FETCH = 25,
     LEONOS_WIN_MSG_FETCH_ACK = 26,
+    LEONOS_WIN_MSG_BUFFER = 27,
+    LEONOS_WIN_MSG_BUFFER_ACK = 28,
     LEONOS_WIN_MSG_EVENT = 30,
     LEONOS_WIN_MSG_INPUT = 31,
     LEONOS_WIN_MSG_WINDOW_NOTIFY = 32,
@@ -75,6 +77,17 @@ struct leonos_win_present {
     uint32_t height;
     uint32_t stride;
 };
+
+/* BUFFER attaches a fully painted replacement via SCM_RIGHTS. Its stride
+ * counts bytes; PRESENT retains the historical pixel-stride convention. */
+struct leonos_win_buffer {
+    uint32_t window_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride;
+};
+
+#define LEONOS_WIN_SURFACE_REPLACED 1u /* WINDOW_NOTIFY type 2, data */
 
 struct leonos_win_update {
     uint32_t window_id;

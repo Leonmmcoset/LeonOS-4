@@ -27,7 +27,7 @@ class VirtualFD:
 
 
 class GuestFS:
-    DISPLAY_CONFIG_PATH = "/system/config/display.conf"
+    DISPLAY_CONFIG_PATH = "/etc/leonos/display.conf"
 
     def __init__(self, root: str | Path, *, language: str = "en", ui_theme: str = "metro", logger=None):
         self.root = Path(root).resolve()
@@ -139,7 +139,7 @@ class GuestFS:
             return neg(EACCES)
         if self._is_display_config(guest):
             return self._open_virtual_display_config(flags)
-        if guest.lower() == "/system/config/locale.conf" and not host.exists():
+        if guest.lower() == "/etc/leonos/locale.conf" and not host.exists():
             text = "lang=zh\n" if self.language == "zh" else "lang=en\n"
             return self._alloc_fd(VirtualFD(io.BytesIO(text.encode("ascii")), False))
         write_mode = flags & C.O_ACCMODE
@@ -308,7 +308,7 @@ class GuestFS:
             return neg(EACCES)
         if self._is_display_config(guest):
             return (C.FS_TYPE_FILE, len(self._display_config))
-        if guest.lower() == "/system/config/locale.conf" and not host.exists():
+        if guest.lower() == "/etc/leonos/locale.conf" and not host.exists():
             return (C.FS_TYPE_FILE, len("lang=zh\n" if self.language == "zh" else "lang=en\n"))
         try:
             st = host.stat()
@@ -332,7 +332,7 @@ class GuestFS:
                 (C.FS_TYPE_DIR if child.is_dir() else C.FS_TYPE_FILE, child.name)
                 for child in sorted(host.iterdir(), key=lambda p: p.name.lower())
             ]
-            if self.guest_abs(path).lower() == "/system/config" and not any(name.lower() == "display.conf" for _, name in entries):
+            if self.guest_abs(path).lower() == "/etc/leonos" and not any(name.lower() == "display.conf" for _, name in entries):
                 entries.append((C.FS_TYPE_FILE, "display.conf"))
             return entries
         except OSError:

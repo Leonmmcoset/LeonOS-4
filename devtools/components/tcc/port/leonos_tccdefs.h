@@ -2,7 +2,7 @@
  * LeonOS target predefines for TinyCC's x86_64 LP64 sysroot.
  *
  * This file is included by TinyCC's target tccdefs.h. It is deliberately
- * kept on the compiler side of the boundary: Picolibc headers are staged
+ * kept on the compiler side of the boundary: musl headers are staged
  * byte-for-byte and do not receive build-time edits.
  */
 #ifndef LEONOS_TCCDEFS_H

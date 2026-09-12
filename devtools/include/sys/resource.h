@@ -1,92 +1,116 @@
-/*
-Copyright (c) 1982, 1986, 1993
-The Regents of the University of California.  All rights reserved.
+#ifndef	_SYS_RESOURCE_H
+#define	_SYS_RESOURCE_H
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-1. Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-3. Neither the name of the University nor the names of its contributors
-may be used to endorse or promote products derived from this software
-without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGE.
- */
-#ifndef _SYS_RESOURCE_H_
-#define _SYS_RESOURCE_H_
-
-#include <sys/cdefs.h>
-#include <sys/_types.h>
-#include <sys/_timeval.h>
-
-_BEGIN_STD_C
-
-#ifndef _RLIM_T_DECLARED
-typedef __rlim_t rlim_t;
-#define _RLIM_T_DECLARED
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#ifndef _ID_T_DECLARED
-typedef __id_t id_t;
-#define _ID_T_DECLARED
+#include <features.h>
+#include <sys/time.h>
+
+#define __NEED_id_t
+
+#ifdef _GNU_SOURCE
+#define __NEED_pid_t
 #endif
+
+#include <bits/alltypes.h>
+#include <bits/resource.h>
+
+typedef unsigned long long rlim_t;
 
 struct rlimit {
-    rlim_t rlim_cur;
-    rlim_t rlim_max;
+	rlim_t rlim_cur;
+	rlim_t rlim_max;
 };
 
 struct rusage {
-    struct timeval ru_utime; /* user time used */
-    struct timeval ru_stime; /* system time used */
+	struct timeval ru_utime;
+	struct timeval ru_stime;
+	/* linux extentions, but useful */
+	long	ru_maxrss;
+	long	ru_ixrss;
+	long	ru_idrss;
+	long	ru_isrss;
+	long	ru_minflt;
+	long	ru_majflt;
+	long	ru_nswap;
+	long	ru_inblock;
+	long	ru_oublock;
+	long	ru_msgsnd;
+	long	ru_msgrcv;
+	long	ru_nsignals;
+	long	ru_nvcsw;
+	long	ru_nivcsw;
+	/* room for more... */
+	long    __reserved[16];
 };
 
-#define RLIM_INFINITY   __INT64_MAX__
-#define RLIM_SAVED_MAX  RLIM_INFINITY
-#define RLIM_SAVED_CUR  RLIM_INFINITY
+int getrlimit (int, struct rlimit *);
+int setrlimit (int, const struct rlimit *);
+int getrusage (int, struct rusage *);
 
-#define RUSAGE_SELF     0  /* calling process */
-#define RUSAGE_CHILDREN -1 /* terminated child processes */
-#if __GNU_VISIBLE
-#define RUSAGE_THREAD 1
+int getpriority (int, id_t);
+int setpriority (int, id_t, int);
+
+#ifdef _GNU_SOURCE
+int prlimit(pid_t, int, const struct rlimit *, struct rlimit *);
+#define prlimit64 prlimit
 #endif
 
-#define PRIO_PROCESS  0
-#define PRIO_PGRP     1
-#define PRIO_USER     2
+#define PRIO_MIN (-20)
+#define PRIO_MAX 20
 
-#define RLIMIT_CPU    0 /* Limit on CPU time per process. */
-#define RLIMIT_FSIZE  1 /* Limit on file size. */
-#define RLIMIT_DATA   2 /* Limit on data segment size. */
-#define RLIMIT_STACK  3 /* Limit on stack size. */
-#define RLIMIT_CORE   4 /* Limit on size of core image. */
-#define RLIMIT_NOFILE 5 /* Limit on number of open files. */
-#define RLIMIT_AS     6 /* Limit on address space size. */
+#define PRIO_PROCESS 0
+#define PRIO_PGRP    1
+#define PRIO_USER    2
 
-#if __XSI_VISIBLE
-int getpriority(int, id_t);
+#define RUSAGE_SELF     0
+#define RUSAGE_CHILDREN (-1)
+#define RUSAGE_THREAD   1
+
+#define RLIM_INFINITY (~0ULL)
+#define RLIM_SAVED_CUR RLIM_INFINITY
+#define RLIM_SAVED_MAX RLIM_INFINITY
+
+#define RLIMIT_CPU     0
+#define RLIMIT_FSIZE   1
+#define RLIMIT_DATA    2
+#define RLIMIT_STACK   3
+#define RLIMIT_CORE    4
+#ifndef RLIMIT_RSS
+#define RLIMIT_RSS     5
+#define RLIMIT_NPROC   6
+#define RLIMIT_NOFILE  7
+#define RLIMIT_MEMLOCK 8
+#define RLIMIT_AS      9
 #endif
-int getrlimit(int, struct rlimit *);
-#if __XSI_VISIBLE
-int getrusage(int, struct rusage *);
-int setpriority(int, id_t, int);
+#define RLIMIT_LOCKS   10
+#define RLIMIT_SIGPENDING 11
+#define RLIMIT_MSGQUEUE 12
+#define RLIMIT_NICE    13
+#define RLIMIT_RTPRIO  14
+#define RLIMIT_RTTIME  15
+#define RLIMIT_NLIMITS 16
+
+#define RLIM_NLIMITS RLIMIT_NLIMITS
+
+#if defined(_LARGEFILE64_SOURCE)
+#define RLIM64_INFINITY RLIM_INFINITY
+#define RLIM64_SAVED_CUR RLIM_SAVED_CUR
+#define RLIM64_SAVED_MAX RLIM_SAVED_MAX
+#define getrlimit64 getrlimit
+#define setrlimit64 setrlimit
+#define rlimit64 rlimit
+#define rlim64_t rlim_t
 #endif
-int setrlimit(int, const struct rlimit *);
 
-_END_STD_C
+#if _REDIR_TIME64
+__REDIR(getrusage, __getrusage_time64);
+#endif
 
-#endif /* !_SYS_RESOURCE_H_ */
+#ifdef __cplusplus
+}
+#endif
+
+#endif

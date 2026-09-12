@@ -2,36 +2,42 @@
 
 LeonOS 4 uses a multi-filesystem storage layer. The normal installed system is
 not a FAT32 root filesystem: it has a small FAT32 EFI System Partition (ESP)
-and a separate writable exFAT root partition. Existing ext2 installations
-remain fully supported and are not automatically migrated.
+and a separate writable ext2 root partition. Existing exFAT installations
+remain readable legacy volumes, but the current Alpine-shaped root layout
+requires real symlinks (for example `/bin/sh` and `/var/run`); FAT32/exFAT
+cannot represent them, so current images do not create an exFAT root and the
+installer rejects that combination instead of materializing directory copies.
 
 ## Installed Disk Layout
 
 | GPT partition | Type | Contents | Runtime mount |
 | --- | --- | --- | --- |
-| 1 | EFI System Partition / FAT32 | `EFI/`, `loader.elf`, `grub/`, `system/kernel.sys`, `system/middlelayer.sys` | `/boot` normally, `/target/boot` while Installer is running |
-| 2 | Microsoft Basic Data / exFAT | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `/` in a normal session, `/target` while Installer is running |
+| 1 | EFI System Partition / FAT32 | `EFI/`, `loader.elf`, `grub/`, `leonos/kernel.sys`, `leonos/middlelayer.sys` | `/boot` normally, `/target/boot` while Installer is running |
+| 2 | Linux filesystem / ext2 | normal rootfs: `bin/`, `sbin/`, `lib/`, `usr/`, `etc/`, `opt/`, `var/`, `home/`, `tmp/`, `run/` | `/` in a normal session, `/target` while Installer is running |
 
 UEFI GRUB and the early loader read partition 1. Once the kernel is running,
-the storage layer selects partition 2 as `/`. A legacy one-partition FAT32
-LeonOS disk remains readable and writable as `/`; it is a compatibility
-fallback, not the layout produced by current image or installer builds.
+the storage layer selects partition 2 as `/`. FAT32 and exFAT data-volume
+backends remain available; the current userspace boot contract requires ext2
+and the new root skeleton. Old images require a fresh installation.
 
-The installer itself keeps using a FAT32 ramdisk root because it must start
+The installer itself keeps using a writable ext2 image as its ramdisk root because it must start
 before any target disk is trusted. Its payload is deliberately split:
 
-- `/install/root` is copied to the exFAT target root `/target` (or to an
-  existing ext2 target during update mode).
+- `/install/root` is copied to the ext2 target root `/target` (or to an
+  existing target with the same layout during update mode).
 - `/install/esp` is copied to the FAT32 target ESP `/target/boot`.
 
 Fresh installation creates both GPT partitions. Update requires both a valid
-exFAT or ext2 root and ESP; old FAT32-only installations should use a fresh
-install.
+root and ESP; old FAT32-only installations should use a fresh install. The
+installer does not migrate former `/system`, `/programs` or `/users` trees.
+See `docs/ROOTFS_LAYOUT_AND_MIGRATION.md` for the current layout and boundaries.
 
 ## Device Namespace
 
 `/dev` is a kernel-provided synthetic filesystem. It is present on every
-runtime root and is not stored in the disk image. Directory reads enumerate
+runtime root. Mount-point directories are stored in the image, but device
+nodes are synthesized. `/dev/shm` is a real root-backed directory, mode 1777,
+cleared before userspace on each boot; it is not a tmpfs mount. Directory reads enumerate
 the complete set of device nodes, including `/dev/null`, `/dev/zero`,
 `/dev/tty`, `/dev/console`, `/dev/fb0`, `/dev/input/event0`,
 `/dev/input/event1`, `/dev/input-method`, `/dev/dsp`,
@@ -166,7 +172,7 @@ out-of-range, or CRC-invalid table before making a modification.
 ## VFS and Paths
 
 LeonOS paths use Unix absolute syntax, for example
-`/system/apps/desktop/desktop.elf`. The middlelayer resolves `.` and `..`,
+`/usr/lib/leonos/apps/desktop/desktop.elf`. The middlelayer resolves `.` and `..`,
 and the storage layer dispatches the result through the longest matching mount
 path. Paths containing `:` are rejected; legacy disk prefixes are not
 supported. Filesystem names are case-insensitive at the

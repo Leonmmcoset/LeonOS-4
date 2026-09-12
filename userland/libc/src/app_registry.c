@@ -7,8 +7,11 @@
 #include <string.h>
 #include <unistd.h>
 
-#define APP_ROOT_SYSTEM "/system/apps"
-#define APP_ROOT_PROGRAMS "/programs"
+#include <leonos/layout.h>
+
+/* One registry root serves both the former system-app and program-app
+ * packages; the manifest's ``system`` key preserves the system flag. */
+#define APP_ROOT LEONOS_LAYOUT_LEONOS_APPS
 
 static struct leonos_app_info registry[LEONOS_APP_REGISTRY_MAX];
 static uint32_t registry_count;
@@ -238,7 +241,7 @@ static int add_package(const char *root, const char *package)
     copy_text(info.name, sizeof(info.name), package);
     copy_text(info.version, sizeof(info.version), "system");
     copy_text(info.category, sizeof(info.category), "Applications");
-    info.flags = text_eq(root, APP_ROOT_SYSTEM) ? LEONOS_APP_FLAG_SYSTEM : 0U;
+    info.flags = 0;
     package_len = text_len(package);
     if (package_len + 5U >= sizeof(fallback_exec) ||
         !join_path(fallback_exec, sizeof(fallback_exec), package_dir, package)) return 0;
@@ -260,6 +263,7 @@ static int add_package(const char *root, const char *package)
         }
         if (read_key(manifest_path, "commands", value, sizeof(value))) copy_text(info.commands, sizeof(info.commands), value);
         if (read_key(manifest_path, "extensions", value, sizeof(value))) copy_text(info.extensions, sizeof(info.extensions), value);
+        if (read_key(manifest_path, "system", value, sizeof(value)) && bool_value(value, 0)) info.flags |= LEONOS_APP_FLAG_SYSTEM;
         if (read_key(manifest_path, "entry", value, sizeof(value)) && bool_value(value, 1)) info.flags |= LEONOS_APP_FLAG_ENTRY;
         if (read_key(manifest_path, "terminal", value, sizeof(value)) && bool_value(value, 0)) info.flags |= LEONOS_APP_FLAG_TERMINAL;
         if (read_key(manifest_path, "hidden", value, sizeof(value)) && bool_value(value, 0)) info.flags |= LEONOS_APP_FLAG_HIDDEN;
@@ -294,9 +298,7 @@ int leonos_app_registry_refresh(void)
 {
     registry_count = 0;
     registry_loaded = 0;
-    int ret = scan_root(APP_ROOT_SYSTEM);
-    if (ret < 0 && ret != -ENOENT) return ret;
-    ret = scan_root(APP_ROOT_PROGRAMS);
+    int ret = scan_root(APP_ROOT);
     if (ret < 0 && ret != -ENOENT) return ret;
     registry_loaded = 1;
     return 0;

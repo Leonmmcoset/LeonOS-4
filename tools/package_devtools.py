@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the LeonOS SDK from the WSL-built Picolibc sysroot."""
+"""Create the LeonOS SDK from the WSL-built musl sysroot."""
 
 from __future__ import annotations
 
@@ -19,12 +19,9 @@ COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 def version_and_revision(source: Path) -> tuple[str, str]:
     version = "unknown"
-    meson_build = source / "meson.build"
-    if meson_build.is_file():
-        match = re.search(r"^\s*version\s*:\s*['\"]([^'\"]+)",
-                          meson_build.read_text(encoding="utf-8"), re.MULTILINE)
-        if match:
-            version = match.group(1)
+    version_file = source / "VERSION"
+    if version_file.is_file():
+        version = version_file.read_text().strip()
     try:
         result = subprocess.run(
             ["git", "-C", str(source), "rev-parse", "HEAD"],
@@ -102,12 +99,13 @@ def main() -> None:
     parser.add_argument("--leonos-lib", type=Path, required=True)
     parser.add_argument("--runtime-so", type=Path, required=True)
     parser.add_argument("--runtime-loader", type=Path, required=True)
-    parser.add_argument("--dynamic-crt", type=Path, required=True)
-    parser.add_argument("--abi-note", type=Path, required=True)
-    parser.add_argument("--picolibc-lib", type=Path, required=True)
-    parser.add_argument("--picolibc-include", type=Path, required=True)
-    parser.add_argument("--picolibc-source", type=Path, required=True)
+
+
+    parser.add_argument("--musl-lib", type=Path, required=True)
+    parser.add_argument("--musl-include", type=Path, required=True)
+    parser.add_argument("--musl-source", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path)
+    parser.add_argument("--leonos-include", type=Path)
     parser.add_argument("--uapi-include", type=Path)
     parser.add_argument("--zlib-lib", type=Path, required=True)
     parser.add_argument("--zlib-source", type=Path, required=True)
@@ -118,6 +116,10 @@ def main() -> None:
     parser.add_argument("--libmagic-so", type=Path)
     parser.add_argument("--libmagic-source", type=Path)
     parser.add_argument("--libmagic-header", type=Path)
+    parser.add_argument("--ncurses", type=Path)
+    parser.add_argument("--pam-root", type=Path)
+    parser.add_argument("--pam-build-metadata", type=Path)
+    parser.add_argument("--crypt-build-metadata", type=Path)
     parser.add_argument("--liblua-lib", type=Path)
     parser.add_argument("--liblua-so", type=Path)
     parser.add_argument("--liblua-source", type=Path)
@@ -141,6 +143,28 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
+    if (args.pam_root is None) != (args.pam_build_metadata is None):
+        raise SystemExit("PAM SDK root and build metadata must be provided together")
+    if args.pam_root is not None:
+        if args.crypt_build_metadata is None:
+            raise SystemExit("PAM SDK requires the libxcrypt build metadata")
+        for required in (
+            args.pam_root / "usr/include/security/pam_appl.h",
+            args.pam_root / "usr/include/security/pam_modules.h",
+            args.pam_root / "usr/share/licenses/linux-pam/Copyright",
+            args.pam_root / "usr/share/licenses/libxcrypt/COPYING.LIB",
+            args.pam_root / "usr/share/licenses/libxcrypt/LICENSING",
+            args.pam_root / "usr/include/crypt.h",
+            args.pam_root / "lib/libcrypt.so.2",
+            args.pam_build_metadata,
+            args.crypt_build_metadata,
+            args.pam_root / "lib/pkgconfig/libcrypt.pc",
+            *(args.pam_root / "lib" / f"lib{name}.so" for name in ("pam", "pam_misc", "pamc")),
+            *(args.pam_root / "lib/pkgconfig" / f"{name}.pc" for name in ("pam", "pam_misc", "pamc")),
+        ):
+            if not required.is_file():
+                raise SystemExit(f"required PAM SDK input is missing: {required}")
+
     sdk_root = args.sdk_root.resolve()
     if not (sdk_root / "Makefile").is_file():
         raise SystemExit(f"SDK source tree not found: {sdk_root}")
@@ -160,13 +184,20 @@ def main() -> None:
         args.libmagic_header is not None,
     )):
         raise SystemExit("libmagic SDK inputs must be provided together")
-    for required in (args.leonos_lib, args.runtime_so, args.runtime_loader,
-                     args.dynamic_crt, args.abi_note,
-                     args.picolibc_lib, args.picolibc_include,
-                     args.picolibc_source / "COPYING.picolibc", args.zlib_lib,
-                     args.zlib_source / "LICENSE", args.libpng_lib,
-                     args.libpng_source / "LICENSE",
-                     *zlib_headers, *libpng_headers):
+    for required in (
+        args.leonos_lib,
+        args.runtime_so,
+        args.runtime_loader,
+        args.musl_lib,
+        args.musl_include,
+        args.musl_source / "COPYRIGHT",
+        args.zlib_lib,
+        args.zlib_source / "LICENSE",
+        args.libpng_lib,
+        args.libpng_source / "LICENSE",
+        *zlib_headers,
+        *libpng_headers,
+    ):
         if not required.exists():
             raise SystemExit(f"required SDK input is missing: {required}")
     if include_libmagic:
@@ -250,19 +281,16 @@ def main() -> None:
             raise SystemExit(f"SDK component tree is missing: {source_path}")
         component_archive_name(component, destination)
 
-    version, revision = version_and_revision(args.picolibc_source)
-    picolibc_headers = [
-        source for source in sorted(args.picolibc_include.rglob("*"))
-        if source.is_file() and source.name != ".leonos-picolibc.stamp"
+    version, revision = version_and_revision(args.musl_source)
+    musl_headers = [
+        source for source in sorted(args.musl_include.rglob("*"))
+        if source.is_file() and source.name != ".leonos-musl.stamp"
     ]
     shared_posix_headers = ()
     if args.leonos_libc_include is not None:
         shared_posix_headers = tuple(
             args.leonos_libc_include / name
-            for name in (Path("curses.h"), Path("ncurses.h"), Path("pty.h"),
-                         Path("arpa/inet.h"), Path("netinet/in.h"),
-                         Path("sys/socket.h"), Path("sys/un.h"),
-                         Path("leonos/posix.h"), Path("leonos/app.h"))
+            for name in (Path("leonos/app.h"),)
         )
         for required in shared_posix_headers:
             if not required.is_file():
@@ -275,14 +303,31 @@ def main() -> None:
             source for source in args.uapi_include.rglob("*")
             if source.is_file()
         ))
-    picolibc_names = {
-        source.relative_to(args.picolibc_include).as_posix()
-        for source in picolibc_headers
+    musl_names = {
+        source.relative_to(args.musl_include).as_posix()
+        for source in musl_headers
     }
     shared_posix_names = {
         source.relative_to(args.leonos_libc_include).as_posix()
         for source in shared_posix_headers
     } if args.leonos_libc_include is not None else set()
+    public_headers = {}
+    for directory in (args.leonos_include,
+                      args.leonos_libc_include / "leonos" if args.leonos_libc_include else None):
+        if directory is not None:
+            for source in sorted(directory.rglob("*.h")):
+                name = "leonos/" + source.relative_to(directory).as_posix()
+                if name not in shared_posix_names and name != "leonos/pgl.h":
+                    public_headers[name] = source
+    for source in uapi_headers:
+        public_headers[source.relative_to(args.uapi_include).as_posix()] = source
+    authoritative_names = shared_posix_names | public_headers.keys()
+    if args.pam_root is not None:
+        authoritative_names |= {"crypt.h"}
+    ncurses_header_names = {
+        "curses.h", "ncurses.h", "ncurses_dll.h", "term.h", "term_entry.h",
+        "termcap.h", "tic.h", "eti.h", "unctrl.h", "menu.h", "form.h", "panel.h",
+    }
     output = args.out.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(delete=False, dir=output.parent,
@@ -312,38 +357,87 @@ def main() -> None:
                         "include/zconf.h", "include/png.h", "include/pngconf.h",
                         "include/pnglibconf.h",
                         "include/curses.h", "include/ncurses.h",
-                        "include/leonos/posix.h", "include/leonos/app.h",
+                        "include/leonos/app.h",
+                        "include/leonos/authd.h", "include/leonos/auth_db.h",
                         "include/portablegl.h", "include/leonos/pgl.h",
                     }
                     or relative_name.startswith("include/stardustui/")
+                    or (args.pam_root is not None and relative_name.startswith("include/security/"))
+                    or relative_name.startswith("share/licenses/")
+                    or relative_name == "bin/leonos-musl-cc"
                 ):
                     continue
-                if relative_name.removeprefix("include/") in shared_posix_names:
+                if relative_name.removeprefix("include/") in authoritative_names:
                     continue
-                if relative_name.removeprefix("include/") in picolibc_names:
+                if relative_name.startswith("include/") and relative_name[8:] in ncurses_header_names:
+                    continue
+                if relative_name.startswith(("share/terminfo/", "share/man/")):
+                    continue
+                if relative_name.removeprefix("include/") in musl_names:
                     continue
                 add_file(archive, f"{SDK_PREFIX}/{relative_name}", source)
-            for source in picolibc_headers:
-                relative = source.relative_to(args.picolibc_include).as_posix()
-                if relative in shared_posix_names:
+            for source in musl_headers:
+                relative = source.relative_to(args.musl_include).as_posix()
+                if relative in authoritative_names:
                     continue
                 add_file(archive, f"{SDK_PREFIX}/include/{relative}", source)
             for source in shared_posix_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.leonos_libc_include).as_posix()}", source)
-            for source in uapi_headers:
-                add_file(archive, f"{SDK_PREFIX}/include/linux/{source.relative_to(args.uapi_include).as_posix()}", source)
-            add_file(archive, f"{SDK_PREFIX}/lib/leonos.a", args.leonos_lib)
-            add_file(archive, f"{SDK_PREFIX}/lib/libleonos.so.1", args.runtime_so)
-            add_file(archive, f"{SDK_PREFIX}/lib/ld-leonos.elf", args.runtime_loader)
-            add_file(archive, f"{SDK_PREFIX}/lib/crt0-dynamic.o", args.dynamic_crt)
-            add_file(archive, f"{SDK_PREFIX}/lib/leonos-abi-note.o", args.abi_note)
-            for name in ("dynamic-app.ld", "interpreter.ld"):
-                source = sdk_root.parent / "userland" / name
+            for name, source in sorted(public_headers.items()):
+                add_file(archive, f"{SDK_PREFIX}/include/{name}", source)
+            if args.ncurses:
+                for directory in ("include", "lib", "share"):
+                    for source in sorted((args.ncurses / directory).rglob("*")):
+                        if source.is_file():
+                            relative = source.relative_to(args.ncurses).as_posix()
+                            add_file(archive, f"{SDK_PREFIX}/{relative}", source)
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/NCURSES-COPYING",
+                         args.ncurses / "share/licenses/ncurses/COPYING")
+            add_file(archive, f"{SDK_PREFIX}/lib/libleonos.a", args.leonos_lib)
+            add_file(archive, f"{SDK_PREFIX}/lib/libleonos.so.2", args.runtime_so)
+            for source in sorted(args.musl_lib.parent.iterdir()):
                 if source.is_file():
-                    add_file(archive, f"{SDK_PREFIX}/{name}", source)
-            add_file(archive, f"{SDK_PREFIX}/lib/libc.a", args.picolibc_lib)
+                    if args.pam_root is not None and source.name in {"libcrypt.a", "libcrypt.so"}:
+                        continue
+                    add_file(archive, f"{SDK_PREFIX}/lib/{source.name}", source)
+            for source in sorted((args.musl_lib.parent.parent / "share/licenses").rglob("*")):
+                if source.is_file():
+                    relative = source.relative_to(args.musl_lib.parent.parent).as_posix()
+                    add_file(archive, f"{SDK_PREFIX}/{relative}", source)
+            add_file(archive, f"{SDK_PREFIX}/bin/leonos-musl-cc", Path("tools/leonos_musl_cc.py"))
             add_file(archive, f"{SDK_PREFIX}/lib/libz.a", args.zlib_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)
+            if args.pam_root is not None:
+                for source in sorted((args.pam_root / "usr/include/security").glob("*.h")):
+                    add_file(archive, f"{SDK_PREFIX}/include/security/{source.name}", source)
+                for source in sorted((args.pam_root / "lib").glob("libpam*.so*")):
+                    add_file(archive, f"{SDK_PREFIX}/lib/{source.name}", source)
+                for source in sorted((args.pam_root / "lib").glob("libcrypt*")):
+                    if source.suffix != ".la":
+                        add_file(archive, f"{SDK_PREFIX}/lib/{source.name}", source)
+                add_file(archive, f"{SDK_PREFIX}/include/crypt.h", args.pam_root / "usr/include/crypt.h")
+                for name in ("COPYING.LIB", "LICENSING"):
+                    add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBXCRYPT-{name}",
+                             args.pam_root / "usr/share/licenses/libxcrypt" / name)
+                for source in sorted((args.pam_root / "lib/pkgconfig").glob("*.pc")):
+                    if source.stem not in {"pam", "pam_misc", "pamc", "libcrypt"}:
+                        continue
+                    # The SDK has a flat, relocatable sysroot; the installed OS
+                    # deliberately keeps /lib separate from /usr/include.
+                    assignments = {"prefix": "${pcfiledir}/../..",
+                                   "libdir": "${prefix}/lib",
+                                   "includedir": "${prefix}/include"}
+                    lines = []
+                    for line in source.read_text().splitlines():
+                        key, separator, _ = line.partition("=")
+                        lines.append(f"{key}={assignments[key]}" if separator and key in assignments else line)
+                    add_text(archive, f"{SDK_PREFIX}/lib/pkgconfig/{source.name}", "\n".join(lines) + "\n")
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LINUX-PAM-COPYRIGHT",
+                         args.pam_root / "usr/share/licenses/linux-pam/Copyright")
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LINUX-PAM-BUILD.json",
+                         args.pam_build_metadata)
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBXCRYPT-BUILD.json",
+                         args.crypt_build_metadata)
             if include_libmagic:
                 assert args.libmagic_lib is not None
                 assert args.libmagic_so is not None
@@ -393,7 +487,7 @@ def main() -> None:
                                      if Path("userland/stardustui/include").is_dir() else []):
                     if source.is_file():
                         add_file(archive, f"{SDK_PREFIX}/include/stardustui/leonos/{source.name}", source)
-            add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-COPYING", args.picolibc_source / "COPYING.picolibc")
+            add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/MUSL-COPYING", args.musl_source / "COPYRIGHT")
             for source in zlib_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.name}", source)
             for source in libpng_headers:
@@ -420,9 +514,9 @@ def main() -> None:
                 add_component_tree(archive, component, destination, Path(source))
             add_text(
                 archive,
-                f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-VERSION.txt",
-                f"Picolibc version: {version}\nPicolibc revision: {revision}\n"
-                "Upstream: https://github.com/picolibc/picolibc\n",
+                f"{SDK_PREFIX}/THIRD_PARTY/MUSL-VERSION.txt",
+                f"musl version: {version}\nmusl revision: {revision}\n"
+                "Upstream: https://git.musl-libc.org/cgit/musl\n",
             )
             add_text(
                 archive,

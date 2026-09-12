@@ -1315,12 +1315,6 @@ static int exfat_find_in_dir_ref(uint32_t directory_cluster, uint8_t nofat, cons
     return -2;
 }
 
-static int exfat_find_in_dir(uint32_t directory_cluster, uint8_t nofat, const char *wanted,
-                             struct storage_node *out)
-{
-    return exfat_find_in_dir_ref(directory_cluster, nofat, wanted, out, 0);
-}
-
 /* Return the file-entry reference for the final component as well as its
  * node.  Root has no file entry set, which is represented by a null ref. */
 static int exfat_lookup_path_ref(const char *path, struct storage_node *out,
@@ -2360,6 +2354,7 @@ static int exfat_rename(const char *old_path, const char *new_path)
     struct storage_node parent, node, existing;
     struct exfat_dir_ref parent_ref;
     struct exfat_dir_ref ref;
+    struct exfat_dir_ref target_ref;
     int ret;
     if (!old_path || !new_path) return -22;
     ret = storage_parent_path(old_path, old_parent_path, sizeof(old_parent_path),
@@ -2369,7 +2364,6 @@ static int exfat_rename(const char *old_path, const char *new_path)
                               new_name, sizeof(new_name));
     if (ret < 0) return ret;
     if (!storage_text_eq_ci(old_parent_path, new_parent_path)) return -22;
-    if (storage_text_eq_ci(old_name, new_name)) return 0;
     {
         uint16_t converted_name[255];
         uint32_t converted_length = 0;
@@ -2383,16 +2377,43 @@ static int exfat_rename(const char *old_path, const char *new_path)
                                 (parent.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
                                 old_name, &node, &ref);
     if (ret < 0) return ret;
-    ret = exfat_find_in_dir(parent.first_cluster,
-                            (parent.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0, new_name, &existing);
-    if (ret == 0) return -17;
+    if (storage_text_eq_ci(old_name, new_name)) return 0;
+    ret = exfat_find_in_dir_ref(parent.first_cluster,
+                            (parent.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0, new_name, &existing, &target_ref);
+    if (ret == 0) {
+        if (node.type != existing.type) return node.type == LEONOS_FS_TYPE_DIR ? -20 : -21;
+        if (existing.type == LEONOS_FS_TYPE_DIR) {
+            ret = exfat_dir_is_empty(&existing);
+            if (ret <= 0) return ret < 0 ? ret : -39;
+        }
+        storage_begin_mutation();
+        /* Publish the source chain under the existing target name before
+         * removing the old name. No lookup can observe a missing target. */
+        ret = exfat_update_entry_data(&target_ref, node.first_cluster, node.size,
+                                      (node.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0);
+        if (ret < 0) return ret;
+        ret = exfat_delete_entry(&ref);
+        if (ret < 0) {
+            (void)exfat_update_entry_data(&target_ref, existing.first_cluster, existing.size,
+                                         (existing.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0);
+            return ret;
+        }
+        if (existing.type == LEONOS_FS_TYPE_DIR) ret = exfat_delete_acl_metadata_file(&existing);
+        if (!ret) ret = exfat_free_clusters(existing.first_cluster,
+                            (existing.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0, existing.size);
+        storage_cache_invalidate();
+        return ret;
+    }
     if (ret != -2) return ret;
     storage_begin_mutation();
     ret = exfat_create_entry(parent.first_cluster, (parent.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
                              (parent.flags & STORAGE_NODE_FLAG_ROOT) ? 0 : &parent_ref,
                              new_name, node.type == LEONOS_FS_TYPE_DIR, node.first_cluster,
-                             node.size, (node.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0, 0);
-    if (ret == 0) ret = exfat_delete_entry(&ref);
+                             node.size, (node.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0, &target_ref);
+    if (ret == 0) {
+        ret = exfat_delete_entry(&ref);
+        if (ret < 0) (void)exfat_delete_entry(&target_ref);
+    }
     if (ret == 0) storage_cache_invalidate();
     return ret;
 }

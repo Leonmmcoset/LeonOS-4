@@ -1,164 +1,133 @@
-/* $NetBSD: complex.h,v 1.3 2010/09/15 16:11:30 christos Exp $ */
-
-/*
- * Copyright (c) 2010 Matthias Drochner.
- * Public domain.
- */
-
 #ifndef _COMPLEX_H
 #define _COMPLEX_H
 
-#include <sys/cdefs.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define complex    _Complex
-#define _Complex_I 1.0fi
-#define I          _Complex_I
-
-_BEGIN_STD_C
-
-/* 7.3.5 Trigonometric functions */
-/* 7.3.5.1 The cacos functions */
-double complex cacos(double complex) __picolibc_export;
-float complex  cacosf(float complex) __picolibc_export;
-
-/* 7.3.5.2 The casin functions */
-double complex casin(double complex) __picolibc_export;
-float complex  casinf(float complex) __picolibc_export;
-
-/* 7.3.5.1 The catan functions */
-double complex catan(double complex) __picolibc_export;
-float complex  catanf(float complex) __picolibc_export;
-
-/* 7.3.5.1 The ccos functions */
-double complex ccos(double complex) __picolibc_export;
-float complex  ccosf(float complex) __picolibc_export;
-
-/* 7.3.5.1 The csin functions */
-double complex csin(double complex) __picolibc_export;
-float complex  csinf(float complex) __picolibc_export;
-
-/* 7.3.5.1 The ctan functions */
-double complex ctan(double complex) __picolibc_export;
-float complex  ctanf(float complex) __picolibc_export;
-
-/* 7.3.6 Hyperbolic functions */
-/* 7.3.6.1 The cacosh functions */
-double complex cacosh(double complex) __picolibc_export;
-float complex  cacoshf(float complex) __picolibc_export;
-
-/* 7.3.6.2 The casinh functions */
-double complex casinh(double complex) __picolibc_export;
-float complex  casinhf(float complex) __picolibc_export;
-
-/* 7.3.6.3 The catanh functions */
-double complex catanh(double complex) __picolibc_export;
-float complex  catanhf(float complex) __picolibc_export;
-
-/* 7.3.6.4 The ccosh functions */
-double complex ccosh(double complex) __picolibc_export;
-float complex  ccoshf(float complex) __picolibc_export;
-
-/* 7.3.6.5 The csinh functions */
-double complex csinh(double complex) __picolibc_export;
-float complex  csinhf(float complex) __picolibc_export;
-
-/* 7.3.6.6 The ctanh functions */
-double complex ctanh(double complex) __picolibc_export;
-float complex  ctanhf(float complex) __picolibc_export;
-
-/* 7.3.7 Exponential and logarithmic functions */
-/* 7.3.7.1 The cexp functions */
-double complex cexp(double complex) __picolibc_export;
-float complex  cexpf(float complex) __picolibc_export;
-
-/* 7.3.7.2 The clog functions */
-double complex clog(double complex) __picolibc_export;
-float complex  clogf(float complex) __picolibc_export;
-
-/* 7.3.8 Power and absolute-value functions */
-/* 7.3.8.1 The cabs functions */
-double         cabs(double complex) __picolibc_export;
-float          cabsf(float complex) __picolibc_export;
-
-/* 7.3.8.2 The cpow functions */
-double complex cpow(double complex, double complex) __picolibc_export;
-float complex  cpowf(float complex, float complex) __picolibc_export;
-
-/* 7.3.8.3 The csqrt functions */
-double complex csqrt(double complex) __picolibc_export;
-float complex  csqrtf(float complex) __picolibc_export;
-
-/* 7.3.9 Manipulation functions */
-/* 7.3.9.1 The carg functions */
-double         carg(double complex) __picolibc_export;
-float          cargf(float complex) __picolibc_export;
-
-/* 7.3.9.2 The cimag functions */
-double         cimag(double complex) __picolibc_export;
-float          cimagf(float complex) __picolibc_export;
-
-/* 7.3.9.3 The conj functions */
-double complex conj(double complex) __picolibc_export;
-float complex  conjf(float complex) __picolibc_export;
-
-/* 7.3.9.4 The cproj functions */
-double complex cproj(double complex) __picolibc_export;
-float complex  cprojf(float complex) __picolibc_export;
-
-/* 7.3.9.5 The creal functions */
-double         creal(double complex) __picolibc_export;
-float          crealf(float complex) __picolibc_export;
-
-#if __ISO_C_VISIBLE >= 2011
-#if __HAVE_BUILTIN_COMPLEX
-#define CMPLX(r, i)  __builtin_complex((double)(r), (double)(i))
-#define CMPLXF(r, i) __builtin_complex((float)(r), (float)(i))
-#define CMPLXL(r, i) __builtin_complex((long double)(r), (long double)(i))
+#define complex _Complex
+#ifdef __GNUC__
+#define _Complex_I (__extension__ (0.0f+1.0fi))
 #else
-#define CMPLX(r, i)  ((double complex)((double)(r) + (double complex)I * (double)(i)))
-#define CMPLXF(r, i) ((float complex)((float)(r) + (float complex)I * (float)(i)))
-#define CMPLXL(r, i)                                                                      \
-    ((long double complex)((long double)(r) + (long double complex)I * (long double)(i)))
+#define _Complex_I (0.0f+1.0fi)
+#endif
+#define I _Complex_I
+
+double complex cacos(double complex);
+float complex cacosf(float complex);
+long double complex cacosl(long double complex);
+
+double complex casin(double complex);
+float complex casinf(float complex);
+long double complex casinl(long double complex);
+
+double complex catan(double complex);
+float complex catanf(float complex);
+long double complex catanl(long double complex);
+
+double complex ccos(double complex);
+float complex ccosf(float complex);
+long double complex ccosl(long double complex);
+
+double complex csin(double complex);
+float complex csinf(float complex);
+long double complex csinl(long double complex);
+
+double complex ctan(double complex);
+float complex ctanf(float complex);
+long double complex ctanl(long double complex);
+
+double complex cacosh(double complex);
+float complex cacoshf(float complex);
+long double complex cacoshl(long double complex);
+
+double complex casinh(double complex);
+float complex casinhf(float complex);
+long double complex casinhl(long double complex);
+
+double complex catanh(double complex);
+float complex catanhf(float complex);
+long double complex catanhl(long double complex);
+
+double complex ccosh(double complex);
+float complex ccoshf(float complex);
+long double complex ccoshl(long double complex);
+
+double complex csinh(double complex);
+float complex csinhf(float complex);
+long double complex csinhl(long double complex);
+
+double complex ctanh(double complex);
+float complex ctanhf(float complex);
+long double complex ctanhl(long double complex);
+
+double complex cexp(double complex);
+float complex cexpf(float complex);
+long double complex cexpl(long double complex);
+
+double complex clog(double complex);
+float complex clogf(float complex);
+long double complex clogl(long double complex);
+
+double cabs(double complex);
+float cabsf(float complex);
+long double cabsl(long double complex);
+
+double complex cpow(double complex, double complex);
+float complex cpowf(float complex, float complex);
+long double complex cpowl(long double complex, long double complex);
+
+double complex csqrt(double complex);
+float complex csqrtf(float complex);
+long double complex csqrtl(long double complex);
+
+double carg(double complex);
+float cargf(float complex);
+long double cargl(long double complex);
+
+double cimag(double complex);
+float cimagf(float complex);
+long double cimagl(long double complex);
+
+double complex conj(double complex);
+float complex conjf(float complex);
+long double complex conjl(long double complex);
+
+double complex cproj(double complex);
+float complex cprojf(float complex);
+long double complex cprojl(long double complex);
+
+double creal(double complex);
+float crealf(float complex);
+long double creall(long double complex);
+
+#ifndef __cplusplus
+#define __CIMAG(x, t) \
+	(+(union { _Complex t __z; t __xy[2]; }){(_Complex t)(x)}.__xy[1])
+
+#define creal(x) ((double)(x))
+#define crealf(x) ((float)(x))
+#define creall(x) ((long double)(x))
+
+#define cimag(x) __CIMAG(x, double)
+#define cimagf(x) __CIMAG(x, float)
+#define cimagl(x) __CIMAG(x, long double)
+#endif
+
+#if __STDC_VERSION__ >= 201112L
+#if defined(_Imaginary_I)
+#define __CMPLX(x, y, t) ((t)(x) + _Imaginary_I*(t)(y))
+#elif defined(__clang__)
+#define __CMPLX(x, y, t) (+(_Complex t){ (t)(x), (t)(y) })
+#else
+#define __CMPLX(x, y, t) (__builtin_complex((t)(x), (t)(y)))
+#endif
+#define CMPLX(x, y) __CMPLX(x, y, double)
+#define CMPLXF(x, y) __CMPLX(x, y, float)
+#define CMPLXL(x, y) __CMPLX(x, y, long double)
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 #endif
-
-#if __GNU_VISIBLE
-double complex clog10(double complex) __picolibc_export;
-float complex  clog10f(float complex) __picolibc_export;
-#endif
-
-#ifdef __HAVE_LONG_DOUBLE
-long double complex csqrtl(long double complex) __picolibc_export;
-long double         cabsl(long double complex) __picolibc_export;
-long double complex cprojl(long double complex) __picolibc_export;
-long double         creall(long double complex) __picolibc_export;
-long double complex conjl(long double complex) __picolibc_export;
-long double         cimagl(long double complex) __picolibc_export;
-
-#ifdef __HAVE_LONG_DOUBLE_MATH
-long double         cargl(long double complex) __picolibc_export;
-long double complex casinl(long double complex) __picolibc_export;
-long double complex cacosl(long double complex) __picolibc_export;
-long double complex catanl(long double complex) __picolibc_export;
-long double complex ccosl(long double complex) __picolibc_export;
-long double complex csinl(long double complex) __picolibc_export;
-long double complex ctanl(long double complex) __picolibc_export;
-long double complex cacoshl(long double complex) __picolibc_export;
-long double complex casinhl(long double complex) __picolibc_export;
-long double complex catanhl(long double complex) __picolibc_export;
-long double complex ccoshl(long double complex) __picolibc_export;
-long double complex csinhl(long double complex) __picolibc_export;
-long double complex ctanhl(long double complex) __picolibc_export;
-long double complex cexpl(long double complex) __picolibc_export;
-long double complex clogl(long double complex) __picolibc_export;
-long double complex cpowl(long double complex, long double complex) __picolibc_export;
-#if __GNU_VISIBLE
-long double complex clog10l(long double complex) __picolibc_export;
-#endif
-#endif /* __HAVE_LONG_DOUBLE_MATH */
-
-#endif /* __HAVE_LONG_DOUBLE */
-
-_END_STD_C
-
-#endif /* ! _COMPLEX_H */

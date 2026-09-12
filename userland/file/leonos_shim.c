@@ -5,6 +5,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <linux/syscall.h>
+
+extern long syscall3(long number, long a0, long a1, long a2);
 
 ssize_t pread(int fd, void *buffer, size_t length, off_t offset)
 {
@@ -42,9 +45,7 @@ ssize_t sread(int fd, void *buffer, size_t length, int can_be_pipe)
 
 ssize_t readlink(const char *path, char *buffer, size_t capacity)
 {
-    (void)path;
-    (void)buffer;
-    (void)capacity;
-    errno = EINVAL;
-    return -1;
+    long ret = syscall3(SYS_readlink, (long)path, (long)buffer, (long)capacity);
+    if (ret < 0) { errno = (int)-ret; return -1; }
+    return (ssize_t)ret;
 }

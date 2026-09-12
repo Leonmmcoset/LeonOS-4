@@ -23,6 +23,8 @@ void apic_timer_init(uint8_t vector, uint32_t initial_count);
 void apic_eoi(void);
 void apic_send_init(uint32_t destination);
 void apic_send_startup(uint32_t destination, uint8_t vector);
+/** @brief Send a fixed-delivery interrupt to one physical local APIC. */
+void apic_send_ipi(uint32_t destination, uint8_t vector);
 bool ioapic_route_irq(uint32_t irq, uint8_t vector, uint32_t destination);
 
 #endif

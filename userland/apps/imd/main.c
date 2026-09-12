@@ -84,7 +84,7 @@ static int imd_text_eq(const char *a, const char *b)
 static void imd_close_client(int slot)
 {
     if (slot < 0 || slot >= (int)IMD_MAX_CLIENTS || !clients[slot].used) return;
-    close(clients[slot].fd);
+    leonos_ipc_close(clients[slot].fd);
     for (uint32_t i = 0; i < IMD_MAX_PROVIDERS; ++i) {
         if (providers[i].used && providers[i].client_slot == slot) {
             providers[i].used = 0;
@@ -281,7 +281,9 @@ static void imd_handle_set_active(int slot, const uint8_t *buffer, uint32_t leng
 {
     struct leonos_inputm_active_request input;
     struct imd_user *user;
-    if (length < sizeof(input) || !input.uid ||
+    if (length < sizeof(input)) { imd_send_ack(slot, -1); return; }
+    memcpy(&input, buffer, sizeof(input));
+    if (!input.uid ||
         (clients[slot].uid != input.uid && clients[slot].uid != 0) ||
         !imd_text_valid(input.id, LEONOS_INPUTM_ID_LEN)) {
         imd_send_ack(slot, -1);
@@ -306,12 +308,13 @@ static void imd_handle_list(int slot, const uint8_t *buffer, uint32_t length)
     uint8_t payload[IMD_FRAME_CAP];
     uint32_t offset = sizeof(ack);
     uint32_t count = 0;
-    if (length < sizeof(request) || !request.uid ||
+    if (length < sizeof(request)) { imd_send_ack(slot, -1); return; }
+    memcpy(&request, buffer, sizeof(request));
+    if (!request.uid ||
         (clients[slot].uid != request.uid && clients[slot].uid != 0)) {
         imd_send_ack(slot, -1);
         return;
     }
-    memcpy(&request, buffer, sizeof(request));
     ack.uid = request.uid;
     ack.count = 0;
     {
@@ -346,12 +349,13 @@ static void imd_handle_get_state(int slot, const uint8_t *buffer, uint32_t lengt
 {
     struct leonos_imd_get_state request;
     struct imd_user *user;
-    if (length < sizeof(request) || !request.uid ||
+    if (length < sizeof(request)) { imd_send_ack(slot, -1); return; }
+    memcpy(&request, buffer, sizeof(request));
+    if (!request.uid ||
         (clients[slot].uid != request.uid && clients[slot].uid != 0)) {
         imd_send_ack(slot, -1);
         return;
     }
-    memcpy(&request, buffer, sizeof(request));
     user = imd_find_user(request.uid);
     if (!user) { imd_send_ack(slot, -1); return; }
     (void)leonos_ipc_send(clients[slot].fd, LEONOS_IMD_MSG_STATE_ACK,
@@ -395,8 +399,9 @@ static void imd_handle_client(int slot)
         if (type == LEONOS_IMD_MSG_RESULT) { imd_handle_result(slot, buffer, length); continue; }
         if (type == LEONOS_IMD_MSG_SET_CONTEXT) {
             struct leonos_inputm_context context;
-            if (length < sizeof(context) || !context.window_id) { imd_send_ack(slot, -1); continue; }
+            if (length < sizeof(context)) { imd_send_ack(slot, -1); continue; }
             memcpy(&context, buffer, sizeof(context));
+            if (!context.window_id) { imd_send_ack(slot, -1); continue; }
             {
                 struct imd_context *slot_context = imd_find_context(client->pid,
                                                                     context.window_id, 1);
@@ -412,8 +417,13 @@ static void imd_handle_client(int slot)
         if (type == LEONOS_IMD_MSG_NOTIFY_CONFIG) {
             struct leonos_inputm_config_request request;
             struct imd_user *user;
-            if (length < sizeof(request) || !request.uid) { imd_send_ack(slot, -1); continue; }
+            if (length < sizeof(request)) { imd_send_ack(slot, -1); continue; }
             memcpy(&request, buffer, sizeof(request));
+            if (!request.uid ||
+                (clients[slot].uid != request.uid && clients[slot].uid != 0)) {
+                imd_send_ack(slot, -1);
+                continue;
+            }
             user = imd_find_user(request.uid);
             if (!user) { imd_send_ack(slot, -1); continue; }
             ++user->state.config_generation;
@@ -433,7 +443,7 @@ int main(void)
     memset(contexts, 0, sizeof(contexts));
     memset(users, 0, sizeof(users));
     for (uint32_t i = 0; i < IMD_MAX_CLIENTS; ++i) clients[i].fd = -1;
-    listen_fd = leonos_ipc_bind_listen(LEONOS_IPC_SOCK_INPUT_METHOD, 8);
+    listen_fd = leonos_ipc_bind_listen_mode(LEONOS_IPC_SOCK_INPUT_METHOD, 8, 0666);
     if (listen_fd < 0) {
         printf("[imd.elf] bind failed errno=%d\n", errno);
         return 1;

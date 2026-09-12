@@ -5,9 +5,9 @@
 建议每个程序使用独立目录：
 
 ```text
-/programs/myapp/myapp.elf
-/programs/myapp/myapp.app.ini
-/programs/myapp/icon.bmp        (可选)
+/usr/lib/leonos/apps/myapp/myapp.elf
+/usr/lib/leonos/apps/myapp/myapp.app.ini
+/usr/lib/leonos/apps/myapp/icon.bmp        (可选)
 ```
 
 桌面入口和文件关联由系统启动服务管理。应用自身不应写入其他用户的主目录，
@@ -41,7 +41,7 @@ version=1
 name=Example
 version=1.0.0
 main_exe=example.elf
-default_path=/programs/example
+default_path=/usr/lib/leonos/apps/example
 requires_admin=0
 desktop_shortcut=1
 icon=example.bmp
@@ -49,7 +49,7 @@ terminal=0
 ```
 
 `main_exe`、`icon` 和输入法设置文件必须是包成员，路径不能为绝对路径，不能含
-`..`。安装器会把程序放到共享程序目录（通常是 `/programs/<name>`），而不是
+`..`。安装器会把程序放到共享程序目录（通常是 `/usr/lib/leonos/apps/<name>`），而不是
 把 `/tools/<package>.api` 当成运行目录。`requires_admin=1` 或受保护目标路径
 会触发管理员授权。
 

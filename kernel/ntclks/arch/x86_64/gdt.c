@@ -6,6 +6,7 @@
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/paging.h>
+#include <ntclks/mm.h>
 
 #define ARCH_MAX_CPUS 64u
 /* Exception handlers must not depend on the interrupted task's kernel stack.
@@ -13,6 +14,28 @@
  * clean, known-good stack even when a task overflowed or corrupted rsp0. */
 #define ARCH_IST_STACK_SIZE 16384u
 #define ARCH_IST_STACK_COUNT 3u
+/* The ACL/exec paths currently need over 40 KiB including their callees.
+ * Native SYSCALL must have the same stack budget as the AP interrupt path. */
+#define ARCH_SYSCALL_STACK_SIZE (128u * 1024u)
+
+#define X86_IA32_STAR 0xc0000081u
+#define X86_IA32_LSTAR 0xc0000082u
+#define X86_IA32_SFMASK 0xc0000084u
+#define X86_IA32_EFER 0xc0000080u
+#define X86_IA32_KERNEL_GS_BASE 0xc0000102u
+
+struct x86_64_syscall_cpu_data {
+    uint64_t user_rsp;
+    uint64_t user_rip;
+    uint64_t user_rflags;
+    uint64_t kernel_stack_top;
+    uint64_t saved_regs[15];
+};
+
+/* SYSCALL does not consult the TSS rsp0 field.  Keep a separate entry stack
+ * and scratch area for each CPU, selected through KERNEL_GS_BASE. */
+struct x86_64_syscall_cpu_data x86_64_syscall_cpu_data[ARCH_MAX_CPUS]
+    __attribute__((aligned(16)));
 
 struct __attribute__((packed)) gdt_ptr {
     uint16_t limit;
@@ -36,12 +59,28 @@ static struct tss64 tss[ARCH_MAX_CPUS];
 static struct gdt_ptr loaded_gdt_ptr[ARCH_MAX_CPUS];
 static uint8_t exception_ist_stack[ARCH_MAX_CPUS][ARCH_IST_STACK_COUNT][ARCH_IST_STACK_SIZE]
     __attribute__((aligned(16)));
+static uint64_t syscall_entry_stack[ARCH_MAX_CPUS];
 
 #define IDENTITY_MAP_LIMIT (1ULL << 32)
 
 extern void x86_64_lgdt(const struct gdt_ptr *ptr);
 extern void x86_64_load_segments(void);
 extern void x86_64_ltr(uint16_t selector);
+extern void x86_64_syscall_entry(void);
+
+static void write_msr(uint32_t msr, uint64_t value)
+{
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)value),
+                     "d"((uint32_t)(value >> 32)) : "memory");
+}
+
+static uint64_t read_msr(uint32_t msr)
+{
+    uint32_t low;
+    uint32_t high;
+    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    return ((uint64_t)high << 32) | low;
+}
 /**
  * Descriptor.
  * @param base Value supplied by the caller.
@@ -115,6 +154,30 @@ static void arch_setup_cpu(uint32_t cpu_index, void *kernel_stack_top)
     x86_64_lgdt(&loaded_gdt_ptr[cpu_index]);
     x86_64_load_segments();
     x86_64_ltr(0x28);
+
+    /* SYSCALL does not load TSS.rsp0. Use a private per-CPU entry stack so a
+     * syscall cannot overwrite the scheduler's ring-0 stack or another
+     * privilege transition's frame. */
+    if (!syscall_entry_stack[cpu_index]) {
+        syscall_entry_stack[cpu_index] = mm_alloc_pages(ARCH_SYSCALL_STACK_SIZE / 4096u);
+        if (!syscall_entry_stack[cpu_index]) {
+            console_printf("[ntclks] CPU%u syscall stack allocation failed\n", cpu_index);
+            for (;;) __asm__ volatile("cli; hlt");
+        }
+    }
+    x86_64_syscall_cpu_data[cpu_index].kernel_stack_top =
+        NTCLKS_KERNEL_DIRECT_MAP_BASE + syscall_entry_stack[cpu_index] +
+        ARCH_SYSCALL_STACK_SIZE;
+    /* STAR encodes kernel CS=0x08 and the user base selector=0x10, producing
+     * user CS=0x23 and SS=0x1b for this GDT. */
+    /* EFER.SCE is required before LSTAR/STAR can execute SYSCALL in ring 3;
+     * without it the instruction raises #UD even when the MSR targets exist. */
+    write_msr(X86_IA32_EFER, read_msr(X86_IA32_EFER) | 1ULL);
+    write_msr(X86_IA32_STAR, (0x10ULL << 48) | (0x08ULL << 32));
+    write_msr(X86_IA32_LSTAR, (uint64_t)(uintptr_t)x86_64_syscall_entry);
+    write_msr(X86_IA32_SFMASK, 0x700ULL); /* IF, TF and DF */
+    write_msr(X86_IA32_KERNEL_GS_BASE,
+              (uint64_t)(uintptr_t)&x86_64_syscall_cpu_data[cpu_index]);
 }
 
 /**

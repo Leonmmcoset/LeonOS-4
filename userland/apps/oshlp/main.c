@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <leonos/layout.h>
 
 #define OSHLP_INITIAL_W 900U
 #define OSHLP_INITIAL_H 620U
@@ -32,7 +33,7 @@
 #define OSHLP_TITLE_MAX 96U
 #define OSHLP_PATH_MAX 128U
 #define OSHLP_META_MAX 80U
-#define OSHLP_DEFAULT_PATH "/docs/leonos.hlp"
+#define OSHLP_DEFAULT_PATH LEONOS_PATH_HELP
 #define OSHLP_KEY_ESCAPE 1U
 #define OSHLP_KEY_PAGE_UP 73U
 #define OSHLP_KEY_PAGE_DOWN 81U

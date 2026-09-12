@@ -12,7 +12,8 @@
 #define LEONOS_UI_COLOR_SCHEME_PURPLE 3u
 #define LEONOS_UI_COLOR_SCHEME_RED 4u
 #define LEONOS_UI_COLOR_SCHEME_GRAPHITE 5u
-#define LEONOS_UI_COLOR_SCHEME_COUNT 6u
+#define LEONOS_UI_COLOR_SCHEME_PINK 6u
+#define LEONOS_UI_COLOR_SCHEME_COUNT 7u
 
 #define LEONOS_UI_COLOR_TEXT 0u
 #define LEONOS_UI_COLOR_CONTENT 1u
@@ -54,6 +55,7 @@
 #define LEONOS_UI_EDIT_SECURE 0x08u
 #define LEONOS_UI_SCROLLBAR_DISABLED 0x01u
 #define LEONOS_UI_TAB_DISABLED 0x01u
+#define LEONOS_UI_TAB_CLOSABLE 0x02u
 #define LEONOS_UI_INPUT_DISABLED 0x01u
 #define LEONOS_UI_TOOLBAR_BUTTON_ACTIVE LEONOS_UI_BUTTON_ACTIVE
 #define LEONOS_UI_TOOLBAR_BUTTON_PRESSED LEONOS_UI_BUTTON_PRESSED
@@ -321,11 +323,15 @@ uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width);
 int leonos_ui_hit(uint32_t px, uint32_t py, int32_t x, int32_t y, uint32_t w, uint32_t h);
 int leonos_ui_keycode_to_char(uint8_t keycode, char *out);
 int leonos_ui_keycode_to_char_shift(uint8_t keycode, uint8_t shifted, char *out);
-/* Update the shared Caps Lock state; pass every key-down/key-up event. */
-void leonos_ui_caps_lock_event(uint8_t keycode, uint8_t pressed);
+/* Absolute state from the input event, applied by libwind before dispatch. */
+void leonos_ui_set_keyboard_modifiers(uint8_t modifiers);
+uint8_t leonos_ui_keyboard_modifiers(void);
 void leonos_ui_pixel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t color);
 void leonos_ui_rect(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t w, uint32_t h, uint32_t color);
+void leonos_ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                         uint32_t codepoint, uint32_t cell_width,
+                         uint32_t fg, uint32_t bg);
 void leonos_ui_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     const char *text, uint32_t fg, uint32_t bg);
 void leonos_ui_text_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
@@ -552,6 +558,11 @@ int leonos_ui_tab_control_handle_mouse(struct leonos_ui_tab_state *state,
                                        uint32_t x, uint32_t y, uint32_t w,
                                        const struct leonos_ui_tab_item *items,
                                        uint32_t count);
+int leonos_ui_tab_control_handle_mouse_ex(struct leonos_ui_tab_state *state,
+                                           int32_t px, int32_t py,
+                                           uint32_t x, uint32_t y, uint32_t w,
+                                           const struct leonos_ui_tab_item *items,
+                                           uint32_t count, uint32_t *closed_id);
 int leonos_ui_tab_control_handle_key(struct leonos_ui_tab_state *state,
                                      uint8_t keycode,
                                      const struct leonos_ui_tab_item *items,
@@ -642,3 +653,4 @@ void leonos_ui_toast_draw(struct leonos_ui_surface *surface,
                           unsigned long now);
 
 #endif
+

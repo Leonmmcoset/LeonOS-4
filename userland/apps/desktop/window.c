@@ -237,7 +237,6 @@ void remove_window_slot(uint8_t slot)
     if (windows[slot].window_id) {
         printf("[desktop.elf] remove window wid=%d title=%s\n", windows[slot].window_id, windows[slot].title);
     }
-    oobe_lock_on_window_removed(slot);
     login_lock_on_window_removed(slot);
     windows[slot].visible = 0;
     windows[slot].minimized = 0;
@@ -415,7 +414,7 @@ void send_app_event_to_window(uint32_t window_id, uint32_t type,
     event.buttons = buttons;
     event.keycode = keycode;
     event.pressed = pressed;
-    event.reserved = 0;
+    event.modifiers = leonos_ui_keyboard_modifiers();
     leonos_gui_send_app_event(&event);
 }
 
@@ -434,35 +433,17 @@ void send_app_event(uint8_t slot, uint32_t type, int32_t x, int32_t y,
                              client_w, client_h, buttons, keycode, pressed);
 }
 
-void fetch_window_surface(uint8_t slot)
+void invalidate_window_surface(uint8_t slot)
 {
-    uint32_t out_w = 0;
-    uint32_t out_h = 0;
-    uint32_t cap_w;
-    uint32_t cap_h;
     if (slot >= MAX_WINDOWS || !windows[slot].visible || !windows[slot].window_id) {
         return;
     }
-    cap_w = window_body_width(&windows[slot]);
-    cap_h = window_body_height(&windows[slot]);
-    if (cap_w > APP_CLIENT_MAX_W) {
-        cap_w = APP_CLIENT_MAX_W;
-    }
-    if (cap_h > APP_CLIENT_MAX_H) {
-        cap_h = APP_CLIENT_MAX_H;
-    }
-    if (cap_w == 0 || cap_h == 0) {
-        return;
-    }
-    if (leonos_gui_fetch_window(windows[slot].window_id, cap_w, cap_h, APP_CLIENT_MAX_W,
-                                app_client_scratch, &out_w, &out_h) > 0) {
-        windows[slot].client_width = out_w;
-        windows[slot].client_height = out_h;
-        if (window_is_fullscreen(&windows[slot]) || windows[slot].anim) {
-            full_redraw_pending = 1;
-        } else {
-            desktop_queue_damage(rect_pad(window_rect(slot), 2));
-        }
+    /* Fetch once when painting. Fetching for every PRESENT can keep this
+     * notification loop busy forever while a copying app produces frames. */
+    if (window_is_fullscreen(&windows[slot]) || windows[slot].anim) {
+        full_redraw_pending = 1;
+    } else {
+        desktop_queue_damage(rect_pad(window_rect(slot), 2));
     }
 }
 
@@ -526,7 +507,7 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
     if (body_w == 0 || body_h == 0) {
         return;
     }
-    if (leonos_gui_fetch_window(windows[id].window_id, body_w, body_h,
+    if (leonos_gui_fetch_window(windows[id].window_id, APP_CLIENT_MAX_W, APP_CLIENT_MAX_H,
                                 APP_CLIENT_MAX_W,
                                 app_client_scratch, &out_w, &out_h) <= 0) {
         text_draw_i(body_x + 16, body_y + 18,
@@ -565,7 +546,9 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
         }
         return;
     }
-    clip = rect_clip(rect_make(body_x, body_y, (int)out_w, (int)out_h));
+    /* A resize event and the application's next frame are asynchronous. */
+    clip = rect_clip(rect_make(body_x, body_y, (int)min_u32(out_w, body_w),
+                              (int)min_u32(out_h, body_h)));
     for (int yy = 0; yy < clip.h; ++yy) {
         uint32_t src_y = (uint32_t)(clip.y - body_y + yy);
         uint32_t src_x = (uint32_t)(clip.x - body_x);

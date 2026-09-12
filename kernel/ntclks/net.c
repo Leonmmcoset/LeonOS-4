@@ -9,6 +9,7 @@
 #include <linux/poll.h>
 #include <ntclks/storage.h>
 #include <ntclks/time.h>
+#include <leonos/layout.h>
 
 #include <leonos/device.h>
 
@@ -56,10 +57,10 @@
 #define NET_SOCKET_RX_CAP 8192u
 #define NET_SOCKET_CLOSE_HOLD_MS 10000u
 #define NET_SOCKET_DEFAULT_TIMEOUT_MS 5000u
-#define NET_SERVICES_CONFIG_PATH "/system/config/services.cfg"
+#define NET_SERVICES_CONFIG_PATH LEONOS_PATH_SERVICES_CFG
 #define NET_SERVICES_CONFIG_MAX 512u
-#define NET_NETWORK_CONFIG_PATH "/system/config/network.conf"
-#define NET_NETWORK_CONFIG_BACKUP_PATH "/system/config/network.conf.bak"
+#define NET_NETWORK_CONFIG_PATH LEONOS_PATH_NETWORK_CONF
+#define NET_NETWORK_CONFIG_BACKUP_PATH LEONOS_PATH_NETWORK_BAK
 #define NET_NETWORK_CONFIG_MAX 256u
 #define NET_NTP_UNIX_EPOCH_OFFSET 2208988800ULL
 

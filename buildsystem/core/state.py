@@ -252,7 +252,7 @@ class TaskStore:
                 output = Path(raw)
                 if not output.is_absolute():
                     output = self.paths.root / output
-                if not output.exists():
+                if not (output.exists() or output.is_symlink()):
                     stale.append(name)
                     break
         for name in stale:

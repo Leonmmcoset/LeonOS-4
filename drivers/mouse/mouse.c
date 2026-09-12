@@ -116,8 +116,8 @@ static struct vmware_call_regs vmware_call(uint32_t cmd, uint32_t arg1)
 static void mouse_clamp_to_framebuffer(void)
 {
     const struct framebuffer *fb = framebuffer_get();
-    int32_t max_x = fb->available ? (int32_t)fb->width - 16 : 1024;
-    int32_t max_y = fb->available ? (int32_t)fb->height - 16 : 768;
+    int32_t max_x = fb->available ? (int32_t)fb->width - 1 : 1023;
+    int32_t max_y = fb->available ? (int32_t)fb->height - 1 : 767;
     if (max_x < 0) {
         max_x = 0;
     }
@@ -284,7 +284,9 @@ static int mouse_write_ack(uint8_t value)
 static int mouse_write_value_ack(uint8_t value)
 {
     for (int attempt = 0; attempt < 3; ++attempt) {
-        ps2_write_data(value);
+        /* The controller routes only one byte per 0xd4 prefix, including
+         * command parameters. A bare data write goes to the keyboard. */
+        mouse_write(value);
         uint8_t ack = ps2_read_data();
         last_ack = ack;
         if (ack == 0xfa) {
@@ -376,11 +378,19 @@ static bool vmware_enable_absolute(void)
     return true;
 }
 
+static int32_t vmware_axis_position(uint32_t value, uint32_t extent)
+{
+    if (!extent) return 0;
+    if (value > 0xffffu) value = 0xffffu;
+    /* Map the pointer hotspot, allowing the cursor image to clip at edges. */
+    return (int32_t)(((uint64_t)value * (extent - 1u)) / 0xffffu);
+}
+
 static void vmware_drain_events(void)
 {
     const struct framebuffer *fb = framebuffer_get();
-    uint32_t max_x = (fb->available && fb->width > 16) ? fb->width - 16 : 1024;
-    uint32_t max_y = (fb->available && fb->height > 16) ? fb->height - 16 : 768;
+    uint32_t width = fb->available ? fb->width : 1024;
+    uint32_t height = fb->available ? fb->height : 768;
 
     for (int count = 0; count < 255; ++count) {
         struct vmware_call_regs status_regs = vmware_call(VMWARE_CMD_ABSPOINTER_STATUS, 0);
@@ -406,8 +416,8 @@ static void vmware_drain_events(void)
             continue;
         }
 
-        int32_t new_x = max_x ? (int32_t)(((uint64_t)data_regs.ebx * max_x) / 0xffffu) : 0;
-        int32_t new_y = max_y ? (int32_t)(((uint64_t)data_regs.ecx * max_y) / 0xffffu) : 0;
+        int32_t new_x = vmware_axis_position(data_regs.ebx, width);
+        int32_t new_y = vmware_axis_position(data_regs.ecx, height);
         mouse_publish(new_x, new_y, buttons, "vmware-abs");
         mouse_publish_wheel(wheel, "vmware-abs");
     }
@@ -441,8 +451,10 @@ static void mouse_hardware_init(void)
     int defaults_ok = mouse_write_ack(0xf6);
     int scale_ok = mouse_write_ack(0xe6);
     int resolution_ok = mouse_write_param(0xe8, 0x03);
-    int sample_ok = mouse_write_param(0xf3, 200);
+    /* Keep the wheel-detection 200/100/80 sequence uninterrupted. A leading
+     * 200 selects the Explorer probe instead and leaves a basic 3-byte mouse. */
     int wheel_ok = mouse_enable_wheel();
+    int sample_ok = mouse_write_param(0xf3, 200);
     packet_size = wheel_ok ? 4 : 3;
     int enable_ok = mouse_write_ack(0xf4);
     state.present = defaults_ok && enable_ok;
@@ -503,7 +515,8 @@ static void mouse_hardware_poll(void)
             if (wheel & 0x08) {
                 wheel = (int8_t)(wheel | 0xf0);
             }
-            mouse_publish_wheel(wheel, "ps2");
+            /* PS/2 uses positive for down; evdev uses positive for up. */
+            mouse_publish_wheel(-wheel, "ps2");
         }
     }
 

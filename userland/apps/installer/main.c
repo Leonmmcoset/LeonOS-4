@@ -2,16 +2,26 @@
 #include <leonos/blockdev.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/layout.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 #include <leonos/ui.h>
+#include <leonos/inputm.h>
+#include <leonos/psf_font.h>
 #include "installer_sha256.h"
 #include "installer_tty.h"
+#include "installer_directory.h"
+#include "installer_setup.h"
+#include "../../auth/standard_accounts.h"
+#include "installer_copy.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <errno.h>
+#include <string.h>
 
 #define INSTALLER_MAX_W 1920
 #define INSTALLER_MAX_H 1080
@@ -26,18 +36,45 @@
 #define KEY_SPACE 57U
 #define KEY_UP 72U
 #define KEY_DOWN 80U
-#define COPY_BUF_SIZE (256U * 1024U)
+#define COPY_BUF_SIZE (32U * 1024U)
+#define COPY_ESP_WRITE_SLICE 4096U
+#define COPY_PRESENT_INTERVAL_MS 50U
+#define INSTALLER_EVENT_BATCH_MAX 32U
 #define UPDATE_APP_ROW_H 24U
 #define UPDATE_APP_MAX LEONOS_FS_MAX_ENTRIES
 #define POLICY_SCROLLBAR_W 18U
 #define POLICY_LINE_TEXT_MAX 256U
 #define POLICY_MAX_LINES 192U
-#define INSTALLER_CJK_FONT "/system/fonts/simsun.ttc"
+#define INSTALLER_CJK_FONT LEONOS_PATH_BROWSER_CJK_FONT
 #define INSTALL_ROOT_PAYLOAD "/install/root"
 #define INSTALL_ESP_PAYLOAD "/install/esp"
 #define INSTALL_ROOT_MOUNT "/target"
 #define INSTALL_ESP_MOUNT "/target/boot"
 
+/* Target-root path contract.  The installer payload uses the same relative
+ * paths as the guest root, so each payload path is INSTALL_ROOT_PAYLOAD plus
+ * the matching guest-relative name. */
+#define TARGET_LEONOS_APPS INSTALL_ROOT_MOUNT LEONOS_LAYOUT_LEONOS_APPS
+#define TARGET_LEONOS_LIB INSTALL_ROOT_MOUNT LEONOS_LAYOUT_LEONOS_LIB
+#define TARGET_LEONOS_DRIVERS INSTALL_ROOT_MOUNT LEONOS_LAYOUT_LEONOS_DRIVERS
+#define TARGET_LEONOS_DOC INSTALL_ROOT_MOUNT LEONOS_LAYOUT_LEONOS_DOC
+#define TARGET_ETC_LEONOS INSTALL_ROOT_MOUNT LEONOS_LAYOUT_ETC_LEONOS
+#define TARGET_VAR_LIB_LEONOS INSTALL_ROOT_MOUNT LEONOS_LAYOUT_VAR_LIB_LEONOS
+#define TARGET_VAR_LOG INSTALL_ROOT_MOUNT LEONOS_LAYOUT_VAR_LOG
+#define TARGET_VAR_TMP INSTALL_ROOT_MOUNT LEONOS_LAYOUT_VAR_TMP
+#define TARGET_FONTS INSTALL_ROOT_MOUNT LEONOS_LAYOUT_LEONOS_FONTS
+#define TARGET_RESOURCES INSTALL_ROOT_MOUNT LEONOS_LAYOUT_LEONOS_RESOURCES
+#define TARGET_CERTS INSTALL_ROOT_MOUNT LEONOS_LAYOUT_ETC_SSL_CERTS
+#define TARGET_USR_BIN INSTALL_ROOT_MOUNT LEONOS_LAYOUT_USR_BIN
+#define TARGET_USR_SBIN INSTALL_ROOT_MOUNT LEONOS_LAYOUT_USR_SBIN
+#define TARGET_USR_LIB INSTALL_ROOT_MOUNT LEONOS_LAYOUT_USR_LIB
+#define TARGET_USR_SHARE INSTALL_ROOT_MOUNT LEONOS_LAYOUT_USR_SHARE
+#define TARGET_HOME INSTALL_ROOT_MOUNT "/home"
+#define TARGET_OPT INSTALL_ROOT_MOUNT "/opt"
+#define TARGET_RUN_LEONOS INSTALL_ROOT_MOUNT LEONOS_LAYOUT_RUN_LEONOS
+#define TARGET_BOOT INSTALL_ROOT_MOUNT "/boot"
+#define TARGET_ESP_KERNEL TARGET_BOOT "/leonos/kernel.sys"
+#define TARGET_ESP_MIDDLELAYER TARGET_BOOT "/leonos/middlelayer.sys"
 /* The installer must be able to change language before it has a writable
  * target system.  Do not make rendering depend on persisting locale.conf on
  * the installation medium. */
@@ -51,6 +88,8 @@ enum installer_page {
     PAGE_MODE,
     PAGE_DISK,
     PAGE_UPDATE_APPS,
+    PAGE_COMPONENTS,
+    PAGE_ACCOUNTS,
     PAGE_CONFIRM,
     PAGE_PROGRESS,
     PAGE_FINISH,
@@ -137,6 +176,11 @@ static uint32_t disk_count;
 static int32_t selected_disk = -1;
 static char confirm_text[16];
 static struct leonos_ui_edit_state confirm_edit;
+static struct installer_setup setup;
+static struct leonos_ui_edit_state account_edits[5];
+static unsigned account_focus;
+static unsigned component_focus;
+static int setup_error;
 static struct update_app_entry update_apps[UPDATE_APP_MAX];
 static uint32_t update_app_count;
 static struct leonos_ui_listview_state update_app_list;
@@ -149,6 +193,7 @@ static uint32_t copy_done;
 static uint64_t copy_total_bytes;
 static uint64_t copy_done_bytes;
 static uint8_t install_success;
+static int reboot_error;
 static uint8_t install_running;
 static uint8_t dirty = 1;
 static uint8_t installer_tty_mode;
@@ -166,14 +211,15 @@ static const char acknowledgements_en[] =
     "## Runtime, Toolchain, and Applications\n"
     "- GNU GRUB 2 - GPL-3.0-or-later\n"
     "- Mbed TLS 2.28.8 - Apache License 2.0\n"
-    "- Picolibc 1.8.12, including the LeonOS port - BSD\n"
+    "- musl 1.2.6 - MIT\n"
+    "- mimalloc 3.5.1 - MIT\n"
     "- zlib 1.3.2, the bundled compression library - zlib License\n"
     "- libpng 1.6.58, the bundled PNG decoder library - libpng License\n"
     "- SQLite 3.46.1 - public-domain dedication and blessing\n"
     "- BusyBox 1.36.1 - GPL-2.0-only\n"
     "- ChenPi11/cmd - GPL-3.0-or-later\n"
     "- GNU less - Less License / GPL-3.0-or-later\n"
-    "- Fastfetch 2.67.0 - MIT\n"
+    "- Fastfetch 2.68.1 - MIT\n"
     "- sl - permissive upstream license\n"
     "- GNU nano 9.2 - GPL-3.0-or-later\n"
     "- TinyCC 0.9.28rc - LGPL-2.1-or-later\n"
@@ -209,14 +255,15 @@ static const char acknowledgements_zh[] =
     "## 运行时、开发工具链与应用程序\n"
     "- GNU GRUB 2 - GPL-3.0-or-later\n"
     "- Mbed TLS 2.28.8 - Apache License 2.0\n"
-    "- Picolibc 1.8.12（含 LeonOS 移植）- BSD\n"
+    "- musl 1.2.6 - MIT\n"
+    "- mimalloc 3.5.1 - MIT\n"
     "- zlib 1.3.2（内置压缩库）- zlib License\n"
     "- libpng 1.6.58（内置 PNG 解码库）- libpng License\n"
     "- SQLite 3.46.1 - 公共领域声明与许可祝福文本\n"
     "- BusyBox 1.36.1 - GPL-2.0-only\n"
     "- ChenPi11/cmd - GPL-3.0-or-later\n"
     "- GNU less - Less License / GPL-3.0-or-later\n"
-    "- Fastfetch 2.67.0 - MIT\n"
+    "- Fastfetch 2.68.1 - MIT\n"
     "- sl - 上游宽松许可\n"
     "- GNU nano 9.2 - GPL-3.0-or-later\n"
     "- TinyCC 0.9.28rc - LGPL-2.1-or-later\n"
@@ -658,6 +705,14 @@ static void set_status(const char *status, const char *detail)
 {
     copy_text(status_text, sizeof(status_text), status);
     copy_text(detail_text, sizeof(detail_text), detail);
+    /* The status line is the only account of why an install or update stopped,
+     * and it lives in the GUI. Mirror it to the serial console so a failure can
+     * be diagnosed from a log instead of a screenshot: without this, a reported
+     * "mount failed ret=-22" gives no way to tell which check produced it. */
+    printf("[installer.elf] status: %s%s%s\n",
+           status ? status : "",
+           (detail && detail[0]) ? " - " : "",
+           (detail && detail[0]) ? detail : "");
 }
 
 static void set_progress_text(const char *status, const char *detail)
@@ -779,6 +834,7 @@ static int path_join(char *dst, uint32_t cap, const char *base, const char *name
             return -1;
         }
     }
+    while (*name == '/') ++name;
     return append_text(dst, &pos, cap, name);
 }
 
@@ -846,6 +902,36 @@ static void reset_confirm(void)
     confirm_edit.focused = 1;
 }
 
+static char installer_root_uuid[37], installer_esp_uuid[37];
+
+/* Commit fstab only after the root payload is copied; failure aborts install. */
+static int installer_write_fstab(void)
+{
+    char text[320], temporary[] = INSTALL_ROOT_MOUNT "/etc/.fstab.XXXXXX";
+    if (!installer_root_uuid[0] || !installer_esp_uuid[0]) return -EINVAL;
+    int length = snprintf(text, sizeof(text),
+        "# <source> <mountpoint> <type> <options> <dump> <pass>\n"
+        "/dev/disk/by-partuuid/%s / ext2 defaults 0 1\n"
+        "/dev/disk/by-partuuid/%s /boot vfat defaults 0 2\n",
+        installer_root_uuid, installer_esp_uuid);
+    if (length < 0 || (size_t)length >= sizeof(text)) return -EOVERFLOW;
+    int fd = mkstemp(temporary), ret = 0;
+    if (fd < 0) return -errno;
+    for (int done = 0; done < length;) {
+        ssize_t count = write(fd, text + done, (size_t)(length - done));
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) { ret = count < 0 ? -errno : -EIO; break; }
+        done += (int)count;
+    }
+    if (!ret && fchown(fd, 0, 0) < 0) ret = -errno;
+    if (!ret && fchmod(fd, 0644) < 0) ret = -errno;
+    if (!ret && fsync(fd) < 0) ret = -errno;
+    if (close(fd) < 0 && !ret) ret = -errno;
+    if (!ret && rename(temporary, INSTALL_ROOT_MOUNT "/etc/fstab") < 0) ret = -errno;
+    if (ret < 0) (void)unlink(temporary);
+    return ret;
+}
+
 static int installer_target_partitions(const char *disk_path, int fresh,
                                        char *esp_path, uint32_t esp_cap,
                                        char *root_path, uint32_t root_cap,
@@ -870,14 +956,14 @@ static int installer_target_partitions(const char *disk_path, int fresh,
         if (ret < 0) return ret;
         root_mib = (uint32_t)((info.sector_count * info.sector_size) / (1024ULL * 1024ULL));
         /* Match main's install_write_gpt layout: a fixed 128 MiB ESP, then
-         * the exFAT root consumes the remaining usable GPT area. The extra
+         * the ext2 root consumes the remaining usable GPT area. The extra
          * 3 MiB reserve covers the primary/backup GPT and 1 MiB alignment
          * slop after the ESP. */
         if (root_mib > 256u) root_mib -= 131u; else root_mib = 64u;
-        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_EXFAT,
+        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_EXT2,
                                       root_mib, "LEONOS4_ROOT", &root);
         if (ret < 0) return ret;
-        ret = leonos_block_gpt_set_type(disk_path, root, LEONOS_BLOCK_GPT_BASIC_DATA);
+        ret = leonos_block_gpt_set_type(disk_path, root, LEONOS_BLOCK_GPT_LINUX);
         if (ret < 0) return ret;
         /* Format through the partition nodes after the GPT reread. */
         ret = leonos_block_partition_path(disk_path, esp, esp_path, esp_cap);
@@ -886,8 +972,11 @@ static int installer_target_partitions(const char *disk_path, int fresh,
         if (ret < 0) return ret;
         ret = leonos_block_format(esp_path, LEONOS_BLOCK_FILESYSTEM_FAT32, NULL);
         if (ret < 0) return ret;
-        *root_filesystem = LEONOS_BLOCK_FILESYSTEM_EXFAT;
-        return leonos_block_format(root_path, LEONOS_BLOCK_FILESYSTEM_EXFAT, NULL);
+        *root_filesystem = LEONOS_BLOCK_FILESYSTEM_EXT2;
+        ret = leonos_block_format(root_path, LEONOS_BLOCK_FILESYSTEM_EXT2, NULL);
+        if (!ret) ret = leonos_block_partition_uuid(disk_path, root, installer_root_uuid);
+        if (!ret) ret = leonos_block_partition_uuid(disk_path, esp, installer_esp_uuid);
+        return ret;
     }
     ret = leonos_block_list_partitions(disk_path, parts, LEONOS_BLOCK_MAX_PARTITIONS, &count);
     printf("[installer.elf] block list partitions ret=%d count=%u disk=%s\n",
@@ -910,12 +999,31 @@ static int installer_target_partitions(const char *disk_path, int fresh,
     return 0;
 }
 
+static uint32_t installer_root_filesystem = LEONOS_BLOCK_FILESYSTEM_UNKNOWN;
+
 static int installer_mount_targets(const char *disk_path, int fresh)
 {
     char esp_path[LEONOS_BLOCK_PATH_LEN], root_path[LEONOS_BLOCK_PATH_LEN];
     uint32_t root_filesystem = LEONOS_BLOCK_FILESYSTEM_UNKNOWN;
     const char *root_fs_name = NULL;
-    int ret = installer_target_partitions(disk_path, fresh, esp_path, sizeof(esp_path),
+    struct stat mountpoint;
+    int ret;
+    /* /target belongs to the installer runtime, not the installed rootfs. */
+    if (mkdir(INSTALL_ROOT_MOUNT, 0755) < 0 && errno != EEXIST) {
+        ret = -errno;
+        printf("[installer.elf] mountpoint mkdir failed path=%s ret=%d\n", INSTALL_ROOT_MOUNT, ret);
+        return ret;
+    }
+    if (lstat(INSTALL_ROOT_MOUNT, &mountpoint) < 0) {
+        ret = -errno;
+        printf("[installer.elf] mountpoint lstat failed path=%s ret=%d\n", INSTALL_ROOT_MOUNT, ret);
+        return ret;
+    }
+    if (!S_ISDIR(mountpoint.st_mode)) {
+        printf("[installer.elf] mountpoint is not a directory path=%s\n", INSTALL_ROOT_MOUNT);
+        return -ENOTDIR;
+    }
+    ret = installer_target_partitions(disk_path, fresh, esp_path, sizeof(esp_path),
                                           root_path, sizeof(root_path),
                                           &root_filesystem);
     if (ret < 0) {
@@ -923,6 +1031,7 @@ static int installer_mount_targets(const char *disk_path, int fresh)
                ret, disk_path ? disk_path : "?", fresh);
         return ret;
     }
+    installer_root_filesystem = root_filesystem;
     printf("[installer.elf] mount targets disk=%s root=%s esp=%s fresh=%d root_fs=%u\n",
            disk_path ? disk_path : "?", root_path, esp_path, fresh,
            root_filesystem);
@@ -941,15 +1050,17 @@ static int installer_mount_targets(const char *disk_path, int fresh)
         return -errno;
     }
     if (mkdir(INSTALL_ESP_MOUNT, 0755) < 0 && errno != EEXIST) {
+        ret = -errno;
         printf("[installer.elf] mount esp mkdir failed path=%s errno=%d\n",
                INSTALL_ESP_MOUNT, errno);
         (void)umount2(INSTALL_ROOT_MOUNT, 0);
-        return -errno;
+        return ret;
     }
     if (mount(esp_path, INSTALL_ESP_MOUNT, "fat32", 0, NULL) < 0) {
+        ret = -errno;
         printf("[installer.elf] mount esp failed path=%s errno=%d\n", esp_path, errno);
         (void)umount2(INSTALL_ROOT_MOUNT, 0);
-        return -errno;
+        return ret;
     }
     return 0;
 }
@@ -993,8 +1104,12 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
     leonos_ui_rect(ui, 0, 0, l.sidebar_w, surface_h, LEONOS_UI_ACTIVE_TITLE);
     leonos_ui_text(ui, 18, 24, "LeonOS 4", LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
     leonos_ui_text(ui, 18, 48, T("Setup", "安装"), LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
+    uint32_t row = 0;
     for (uint32_t i = 0; i < PAGE_COUNT; ++i) {
-        uint32_t y = 104 + i * 34;
+        if (i == PAGE_UPDATE_APPS && install_mode != INSTALL_MODE_UPDATE) continue;
+        if ((i == PAGE_COMPONENTS || i == PAGE_ACCOUNTS) && install_mode == INSTALL_MODE_UPDATE) continue;
+        uint32_t spacing = surface_h >= 600 ? 34 : 26;
+        uint32_t y = 104 + row++ * spacing;
         uint32_t fg = i == page ? LEONOS_UI_BLACK : LEONOS_UI_WHITE;
         uint32_t bg = i == page ? LEONOS_UI_LIGHT : LEONOS_UI_ACTIVE_TITLE;
         if (i == page) {
@@ -1015,6 +1130,10 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
             label = T("Disk", "硬盘");
         } else if (i == PAGE_UPDATE_APPS) {
             label = T("Apps", "程序");
+        } else if (i == PAGE_COMPONENTS) {
+            label = T("Components", "组件");
+        } else if (i == PAGE_ACCOUNTS) {
+            label = T("Accounts", "账户");
         } else if (i == PAGE_CONFIRM) {
             label = T("Confirm", "确认");
         } else if (i == PAGE_PROGRESS) {
@@ -1039,6 +1158,8 @@ static void draw_title(struct leonos_ui_surface *ui, const char *title,
 
 static uint32_t primary_disabled(void)
 {
+    if (setup_error && page != PAGE_FINISH) return 1;
+    if (page == PAGE_ACCOUNTS) return !installer_setup_valid(&setup);
     if (install_running) {
         return 1;
     }
@@ -1178,7 +1299,7 @@ static void draw_welcome(struct leonos_ui_surface *ui)
     struct installer_layout l = get_layout();
     draw_title(ui, T("LeonOS 4 Setup", "LeonOS 4 安装程序"), T("Install a new system or update an existing LeonOS 4 disk.", "全新安装系统，或更新现有 LeonOS 4 硬盘。"));
     leonos_ui_text(ui, l.content_x, l.content_y + 84, T("Setup can copy the full normal system payload", "安装程序可以复制完整的普通系统文件"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, l.content_x, l.content_y + 108, T("or replace the boot/system files on an existing installation.", "也可以替换现有安装中的启动和系统文件。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, l.content_x, l.content_y + 108, T("or replace the boot/leonos and system files on an existing installation.", "也可以替换现有安装中的启动和系统文件。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, l.content_x, l.content_y + 164, T("SATA/AHCI and IDE/PATA target disks are supported.", "支持 SATA/AHCI 和 IDE/PATA 目标硬盘。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
@@ -1284,8 +1405,8 @@ static void draw_update_apps_page(struct leonos_ui_surface *ui)
                T("Changed or missing programs are selected; changed drivers are refreshed automatically.",
                  "变化或缺失的程序默认勾选；变化的驱动程序会自动刷新。"));
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 72, l.content_w,
-                           T("boot, system/lib, kerneldebug, EFI, docs, and drivers will be refreshed. Extra target programs and drivers are kept.",
-                             "boot、system/lib、kerneldebug、EFI、内置文档和驱动程序会刷新；目标中多出的程序和驱动会保留。"),
+                           T("boot, libraries, kerneldebug, EFI, docs, and drivers will be refreshed. Extra target applications and drivers are kept.",
+                             "boot、运行库、kerneldebug、EFI、内置文档和驱动程序会刷新；目标中多出的应用和驱动会保留。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_list_header(ui, l.content_x, header_y, list_w,
                           T("Programs to replace", "要替换的程序"));
@@ -1344,8 +1465,8 @@ static void draw_confirm_page(struct leonos_ui_surface *ui)
                            install_mode == INSTALL_MODE_UPDATE
                        ? T("The FAT32 boot partition, exFAT or ext2 system files, dynamic runtime libraries, kernel debugger, and bundled docs will be refreshed. Selected program packages will be refreshed.",
                                    "FAT32 启动分区、exFAT 或 ext2 系统文件、动态运行库、内核调试模块和内置文档会刷新；已选程序包会刷新。")
-                               : T("The selected disk will be erased and formatted with a FAT32 ESP and exFAT system root.",
-                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 exFAT 系统根分区。"),
+                               : T("The selected disk will be erased and formatted with a FAT32 ESP and ext2 system root.",
+                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 ext2 系统根分区。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, l.content_x, l.content_y + 174,
                    install_mode == INSTALL_MODE_UPDATE
@@ -1374,6 +1495,12 @@ static void draw_finish_page(struct leonos_ui_surface *ui)
                    install_mode == INSTALL_MODE_UPDATE ? T("LeonOS was updated on the selected disk.", "所选硬盘上的 LeonOS 已更新。")
                                                        : T("LeonOS was installed to the selected disk.", "LeonOS 已安装到所选硬盘。"));
         leonos_ui_text(ui, l.content_x, l.content_y + 96, T("Remove the installation media, then restart.", "移除安装介质，然后重启。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+        if (reboot_error) {
+            leonos_ui_text(ui, l.content_x, l.content_y + 130,
+                           T("Restart failed", "重启失败"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+            leonos_ui_text_clipped(ui, l.content_x, l.content_y + 164, l.content_w,
+                                   strerror(reboot_error), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+        }
     } else {
         draw_title(ui,
                    install_mode == INSTALL_MODE_UPDATE ? T("Update Failed", "更新失败")
@@ -1382,6 +1509,59 @@ static void draw_finish_page(struct leonos_ui_surface *ui)
         leonos_ui_text(ui, l.content_x, l.content_y + 96, status_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
         leonos_ui_text_clipped(ui, l.content_x, l.content_y + 130, l.content_w, detail_text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
+}
+
+static uint32_t account_width(void)
+{
+    uint32_t width = get_layout().content_w;
+    return width < 480 ? width : 480;
+}
+
+static void draw_components_page(struct leonos_ui_surface *ui)
+{
+    struct installer_layout l = get_layout();
+    draw_title(ui, T("Components", "组件"), 0);
+    for (unsigned i = 0; i < 2; ++i) {
+        leonos_ui_checkbox(ui, l.content_x, l.content_y + 80 + i * 54,
+                           installer_component_names[i], setup.component_selected[i],
+                           setup.component_available[i] ? 0 : LEONOS_UI_BUTTON_DISABLED);
+        if (!setup.component_available[i])
+            leonos_ui_text_clipped(ui, l.content_x + 24, l.content_y + 104 + i * 54,
+                                   l.content_w - 24, T("Not on this medium", "此介质未包含"),
+                                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    }
+}
+
+static void draw_accounts_page(struct leonos_ui_surface *ui)
+{
+    struct installer_layout l = get_layout();
+    leonos_inputm_set_current_context(LEONOS_INPUTM_CONTEXT_FOCUSED |
+        (account_focus ? LEONOS_INPUTM_CONTEXT_SECURE : 0), l.content_x,
+        l.content_y + 84 + account_focus * 54, account_width(), LEONOS_FONT_H + 8);
+    const char *labels[] = {T("Username", "普通用户名"), T("Password", "普通用户密码"),
+                            T("Confirm password", "确认普通用户密码"),
+                            T("root password", "root 密码"), T("Confirm root password", "确认 root 密码")};
+    draw_title(ui, T("Accounts", "账户"), T("Administrator: root", "管理员：root"));
+    for (unsigned i = 0; i < 5; ++i) {
+        uint32_t y = l.content_y + 64 + i * 54;
+        leonos_ui_text(ui, l.content_x, y, labels[i], LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+        char masked[LEONOS_AUTH_PASSWORD_LEN];
+        const char *text = account_edits[i].buffer;
+        if (i) {
+            size_t length = strlen(text);
+            memset(masked, '*', length);
+            masked[length] = 0;
+            text = masked;
+        }
+        leonos_ui_edit(ui, l.content_x, y + 20, account_width(), text,
+                       account_edits[i].cursor, account_edits[i].scroll,
+                       i == account_focus ? LEONOS_UI_EDIT_FOCUSED : 0);
+    }
+    if (setup.username[0] && !installer_setup_valid(&setup))
+        leonos_ui_text_clipped(ui, l.content_x, l.content_y + 346, l.content_w,
+                               T("Passwords: 1-32 characters, no spaces; confirmations must match",
+                                 "密码为 1 至 32 个字符，不含空格，两次输入需一致；请检查用户名"),
+                               LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
 static void draw_installer(struct leonos_ui_surface *ui)
@@ -1412,6 +1592,12 @@ static void draw_installer(struct leonos_ui_surface *ui)
         break;
     case PAGE_CONFIRM:
         draw_confirm_page(ui);
+        break;
+    case PAGE_COMPONENTS:
+        draw_components_page(ui);
+        break;
+    case PAGE_ACCOUNTS:
+        draw_accounts_page(ui);
         break;
     case PAGE_PROGRESS:
         draw_progress_page(ui);
@@ -1472,16 +1658,14 @@ static uint32_t copy_progress_percent(void)
 static void show_copy_progress(int window_id, struct leonos_ui_surface *ui,
                                const char *detail)
 {
+    static unsigned long last_present_ms;
+    if (!installer_tty_mode) {
+        unsigned long now = leonos_uptime_ms();
+        if (now - last_present_ms < COPY_PRESENT_INTERVAL_MS) return;
+        last_present_ms = now;
+    }
     show_progress(window_id, ui, copy_progress_percent(),
                   T("Copying system files", "正在复制系统文件"), detail);
-}
-
-/* Each recursive traversal retains its parent listing while descending. Keep
- * that 8 KiB listing off the small user stack. */
-static struct leonos_dir_entry *alloc_dir_entries(void)
-{
-    return (struct leonos_dir_entry *)malloc(sizeof(struct leonos_dir_entry) *
-                                             LEONOS_FS_MAX_ENTRIES);
 }
 
 /* mkdir(3) follows the POSIX convention and returns -1 on failure, while
@@ -1492,22 +1676,29 @@ static struct leonos_dir_entry *alloc_dir_entries(void)
 static int installer_mkdir(const char *path)
 {
     long ret;
+    struct stat status;
     if (!path) {
         return -22;
     }
-    ret = syscall2(SYS_mkdir, (long)path, 0);
+    /* Existing mount roots need no creation, and links must not redirect
+     * installation writes outside the selected target tree. */
+    if (lstat(path, &status) == 0)
+        return S_ISDIR(status.st_mode) ? -EEXIST : -ENOTDIR;
+    if (errno != ENOENT) return -errno;
+    ret = syscall2(SYS_mkdir, (long)path, 0755);
+    if (ret == -EEXIST) {
+        if (lstat(path, &status) < 0) return -errno;
+        if (!S_ISDIR(status.st_mode)) return -ENOTDIR;
+    }
     return ret < 0 ? (int)ret : 0;
 }
 
 static int count_files_recursive(const char *src, uint32_t *out_count)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         goto out;
     }
@@ -1523,13 +1714,21 @@ static int count_files_recursive(const char *src, uint32_t *out_count)
         }
         if (entries[i].type == LEONOS_FS_TYPE_FILE) {
             struct leonos_stat st;
+            if (!installer_setup_include(&setup, child)) continue;
             if (leonos_stat_legacy(child, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
                 copy_total_bytes += st.size;
             }
             ++*out_count;
             continue;
         }
+        if (entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
+            if (!installer_setup_include(&setup, child)) continue;
+            /* Symlink recreation is a metadata-sized work item. */
+            ++*out_count;
+            continue;
+        }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
+            if (!installer_setup_include(&setup, child)) continue;
             ret = count_files_recursive(child, out_count);
             if (ret < 0) {
                 goto out;
@@ -1557,9 +1756,21 @@ static int source_file_exists(const char *path)
     return path_has_type(path, LEONOS_FS_TYPE_FILE) == 0;
 }
 
+/* Defined below: final-symlink-aware helpers used by traversal. */
+static int path_type_nofollow(const char *path);
+static int copy_symlink_path(const char *src, const char *dst);
+
 static int add_file_copy_work(const char *path)
 {
     struct leonos_stat st;
+    int type = path_type_nofollow(path);
+    if (type == LEONOS_FS_TYPE_SYMLINK) {
+        ++copy_total;
+        return 0;
+    }
+    if (type < 0) {
+        return type;
+    }
     int ret = leonos_stat_legacy(path, &st);
     if (ret < 0) {
         return ret;
@@ -1574,26 +1785,23 @@ static int add_file_copy_work(const char *path)
 
 static int remove_path_recursive(const char *path)
 {
-    struct leonos_stat st;
+    struct stat lst;
     struct leonos_dir_entry *entries;
-    int ret = leonos_stat_legacy(path, &st);
-    if (ret < 0) {
-        return ret == -2 ? 0 : ret;
+    /* lstat is essential here: unlinking "/target/bin" must remove the
+     * usr-merge symlink itself, never recurse into /usr/bin. */
+    if (lstat(path, &lst) < 0) {
+        return errno == ENOENT ? 0 : -errno;
     }
-    if (st.type == LEONOS_FS_TYPE_FILE) {
+    if (S_ISLNK(lst.st_mode) || !S_ISDIR(lst.st_mode)) {
         return unlink(path);
     }
-    if (st.type != LEONOS_FS_TYPE_DIR) {
-        return -20;
-    }
-    entries = alloc_dir_entries();
-    if (!entries) {
-        return -12;
-    }
+    entries = NULL;
+    int ret;
     for (;;) {
         uint32_t count = 0;
         uint32_t removed = 0;
-        ret = leonos_list_dir(path, entries, LEONOS_FS_MAX_ENTRIES, &count);
+        free(entries);
+        ret = installer_list_dir(path, &entries, &count);
         if (ret < 0) {
             goto out;
         }
@@ -1628,91 +1836,140 @@ out:
 static int copy_dir_recursive(const char *src, const char *dst,
                               int window_id, struct leonos_ui_surface *ui);
 
-static int replace_payload_dir_at(const char *source_root, const char *target_root,
-                                  const char *source_name, const char *target_name,
-                                  int window_id,
-                                  struct leonos_ui_surface *ui)
-{
-    char src[LEONOS_FS_PATH_LEN];
-    char dst[LEONOS_FS_PATH_LEN];
-    int ret;
-    if (path_join(src, sizeof(src), source_root, source_name) < 0 ||
-        path_join(dst, sizeof(dst), target_root, target_name) < 0) {
-        return -1;
-    }
-    show_copy_progress(window_id, ui, dst);
-    ret = remove_path_recursive(dst);
-    if (ret < 0) {
-        printf("[installer.elf] remove payload dir %s ret=%d\n", dst, ret);
-        return ret;
-    }
-    ret = installer_mkdir(dst);
-    if (ret < 0 && ret != -17) {
-        printf("[installer.elf] mkdir payload dir %s ret=%d\n", dst, ret);
-        return ret;
-    }
-    return copy_dir_recursive(src, dst, window_id, ui);
-}
-
 static int copy_file_path(const char *src, const char *dst,
                           int window_id, struct leonos_ui_surface *ui)
 {
     int in_fd = open(src, LEONOS_O_RDONLY, 0);
-    int out_fd;
-    long got;
+    int out_fd = -1;
+    int error = 0;
+    char temporary[LEONOS_FS_PATH_LEN];
+    struct stat source;
+    long got = 0;
+    uint32_t write_slice = sizeof(copy_buf);
+    /* FAT32 extends the ESP chain synchronously under the kernel lock.
+     * Bound each transaction so input and painting can run between writes. */
+    if (strncmp(dst, INSTALL_ESP_MOUNT "/", sizeof(INSTALL_ESP_MOUNT)) == 0)
+        write_slice = COPY_ESP_WRITE_SLICE;
     if (in_fd < 0) {
-        printf("[installer.elf] open source %s ret=%d\n", src, in_fd);
-        return in_fd;
+        return -errno;
     }
-    out_fd = open(dst, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    if (fstat(in_fd, &source) < 0) { error = errno; goto done; }
+    if (!S_ISREG(source.st_mode)) { error = EINVAL; goto done; }
+    const char *slash = strrchr(dst, '/');
+    if (!slash) { error = EINVAL; goto done; }
+    int n = snprintf(temporary, sizeof(temporary), "%.*s.leonos-copy-XXXXXX",
+                     (int)(slash - dst + 1), dst);
+    if (n < 0 || (size_t)n >= sizeof(temporary)) { error = ENAMETOOLONG; goto done; }
+    /* A failed copy must leave the previous file (and any hard-link aliases)
+     * intact. mkstemp also refuses to follow an attacker-supplied temp link. */
+    out_fd = mkstemp(temporary);
     if (out_fd < 0) {
-        close(in_fd);
-        printf("[installer.elf] open target %s ret=%d\n", dst, out_fd);
-        return out_fd;
+        error = errno;
+        goto done;
     }
     if (!installer_tty_mode) {
         printf("[installer.elf] copying %s -> %s\n", src, dst);
     }
     show_copy_progress(window_id, ui, dst);
-    while ((got = read(in_fd, copy_buf, sizeof(copy_buf))) > 0) {
+    for (;;) {
+        got = installer_read_chunk(in_fd, copy_buf, sizeof(copy_buf));
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) break;
         long written = 0;
         while (written < got) {
-            long ret = write(out_fd, copy_buf + written, (uint32_t)(got - written));
+            uint32_t chunk = (uint32_t)(got - written);
+            if (chunk > write_slice) chunk = write_slice;
+            long ret = write(out_fd, copy_buf + written, chunk);
+            if (ret < 0 && errno == EINTR) continue;
             if (ret <= 0) {
-                close(in_fd);
-                close(out_fd);
-                /* Keep the native negative errno in the TTY log.  Older
-                 * installer builds collapsed this to -1, hiding whether the
-                 * failure came from FAT allocation, directory lookup, or I/O. */
-                printf("[installer.elf] write target %s ret=%d\n", dst,
-                       ret < 0 ? (int)ret : -1);
-                return ret < 0 ? (int)ret : -1;
+                error = ret < 0 ? errno : EIO;
+                goto done;
             }
             written += ret;
             copy_done_bytes += (uint64_t)ret;
             show_copy_progress(window_id, ui, dst);
-            sleep_ms(1);
+            if (written < got) (void)sched_yield();
         }
+        /* read(2) may return a single 4 KiB slice. Sleeping after every short
+         * read turns each slice into a full PIT tick. Yield without a timed
+         * delay; progress painting remains throttled independently. */
+        (void)sched_yield();
+    }
+    if (got < 0) { error = errno; goto done; }
+    if (fchown(out_fd, source.st_uid, source.st_gid) < 0 ||
+        fchmod(out_fd, source.st_mode & 07777) < 0 || fsync(out_fd) < 0) {
+        error = errno;
+        goto done;
+    }
+    if (close(out_fd) < 0) error = errno;
+    out_fd = -1;
+    if (!error && rename(temporary, dst) < 0) error = errno;
+    if (error) unlink(temporary);
+done:
+    if (out_fd >= 0) {
+        close(out_fd);
+        unlink(temporary);
     }
     close(in_fd);
-    close(out_fd);
-    if (got < 0) {
-        printf("[installer.elf] read source %s ret=%d\n", src, (int)got);
+    if (error) printf("[installer.elf] copy %s -> %s failed errno=%d\n", src, dst, error);
+    return -error;
+}
+
+/* Return the type of path without following a final symlink. */
+static int path_type_nofollow(const char *path)
+{
+    struct stat status;
+    if (!path || lstat(path, &status) < 0) {
+        return errno ? -errno : -2;
     }
-    return got < 0 ? (int)got : 0;
+    if (S_ISLNK(status.st_mode)) return LEONOS_FS_TYPE_SYMLINK;
+    if (S_ISDIR(status.st_mode)) return LEONOS_FS_TYPE_DIR;
+    if (S_ISREG(status.st_mode)) return LEONOS_FS_TYPE_FILE;
+    return LEONOS_FS_TYPE_DEVICE;
+}
+
+/* Recreate a symlink with the same literal target.  The Alpine root
+ * layout depends on symlinks staying symlinks across installation; copying
+ * the target bytes as a directory or regular file is not equivalent. */
+static int copy_symlink_path(const char *src, const char *dst)
+{
+    char target[LEONOS_FS_PATH_LEN];
+    char temporary[LEONOS_FS_PATH_LEN];
+    struct stat status;
+    ssize_t length;
+    if (!src || !dst) return -22;
+    length = readlink(src, target, sizeof(target) - 1U);
+    if (length < 0) return -errno;
+    if (length >= (ssize_t)sizeof(target) - 1U) return -36;
+    target[length] = 0;
+    if (lstat(src, &status) < 0) return -errno;
+    const char *slash = strrchr(dst, '/');
+    if (!slash) return -EINVAL;
+    int n = snprintf(temporary, sizeof(temporary), "%.*s.leonos-link-XXXXXX",
+                     (int)(slash - dst + 1), dst);
+    if (n < 0 || (size_t)n >= sizeof(temporary)) return -ENAMETOOLONG;
+    int fd = mkstemp(temporary);
+    if (fd < 0) return -errno;
+    int error = close(fd) < 0 ? errno : 0;
+    if (unlink(temporary) < 0 && !error) error = errno;
+    if (error) return -error;
+    if (symlink(target, temporary) < 0) return -errno;
+    if (lchown(temporary, status.st_uid, status.st_gid) < 0 ||
+        rename(temporary, dst) < 0) {
+        int error = errno;
+        unlink(temporary);
+        return -error;
+    }
+    return 0;
 }
 
 static int copy_dir_recursive(const char *src, const char *dst,
                               int window_id, struct leonos_ui_surface *ui)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         printf("[installer.elf] list source dir %s ret=%d\n", src, ret);
         goto out;
@@ -1730,6 +1987,7 @@ static int copy_dir_recursive(const char *src, const char *dst,
             ret = -1;
             goto out;
         }
+        if (!installer_setup_include(&setup, src_child)) continue;
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
             ret = installer_mkdir(dst_child);
             if (ret == -17) {
@@ -1761,9 +2019,24 @@ static int copy_dir_recursive(const char *src, const char *dst,
             }
             ++copy_done;
             show_copy_progress(window_id, ui, dst_child);
+        } else if (entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
+            ret = copy_symlink_path(src_child, dst_child);
+            if (ret < 0) {
+                printf("[installer.elf] symlink %s -> %s ret=%d\n", src_child, dst_child, ret);
+                goto out;
+            }
+            ++copy_done;
+            show_copy_progress(window_id, ui, dst_child);
         }
     }
-    ret = 0;
+    struct stat directory_mode;
+    if (stat(src, &directory_mode) < 0 ||
+        chown(dst, directory_mode.st_uid, directory_mode.st_gid) < 0 ||
+        chmod(dst, directory_mode.st_mode & 07777) < 0) {
+        ret = -errno;
+    } else {
+        ret = 0;
+    }
 out:
     free(entries);
     return ret;
@@ -1772,19 +2045,15 @@ out:
 static int merge_dir_recursive(const char *src, const char *dst,
                                int window_id, struct leonos_ui_surface *ui)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
-        return -12;
-    }
     ret = installer_mkdir(dst);
     if (ret < 0 && ret != -17) {
         printf("[installer.elf] mkdir merge dir %s ret=%d\n", dst, ret);
         goto out;
     }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         printf("[installer.elf] list merge source dir %s ret=%d\n", src, ret);
         goto out;
@@ -1817,6 +2086,14 @@ static int merge_dir_recursive(const char *src, const char *dst,
             }
             ++copy_done;
             show_copy_progress(window_id, ui, dst_child);
+        } else if (entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
+            ret = copy_symlink_path(src_child, dst_child);
+            if (ret < 0) {
+                printf("[installer.elf] symlink %s -> %s ret=%d\n", src_child, dst_child, ret);
+                goto out;
+            }
+            ++copy_done;
+            show_copy_progress(window_id, ui, dst_child);
         }
     }
     ret = 0;
@@ -1830,13 +2107,10 @@ out:
  * mode is additive for user data and only refreshes files shipped by LeonOS. */
 static int package_has_changes(const char *src, const char *dst)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         goto out;
     }
@@ -1862,7 +2136,8 @@ static int package_has_changes(const char *src, const char *dst)
             if (ret != 0) {
                 goto out;
             }
-        } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+        } else if (entries[i].type == LEONOS_FS_TYPE_FILE ||
+                   entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
             uint8_t missing;
             uint8_t different;
             ret = installer_files_equal(src_child, dst_child, &missing, &different);
@@ -1883,13 +2158,10 @@ out:
 
 static int count_changed_files_recursive(const char *src, const char *dst)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         goto out;
     }
@@ -1907,7 +2179,8 @@ static int count_changed_files_recursive(const char *src, const char *dst)
         }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
             ret = count_changed_files_recursive(src_child, dst_child);
-        } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+        } else if (entries[i].type == LEONOS_FS_TYPE_FILE ||
+                   entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
             uint8_t missing;
             uint8_t different;
             ret = installer_files_equal(src_child, dst_child, &missing, &different);
@@ -1930,19 +2203,15 @@ out:
 static int copy_changed_dir_recursive(const char *src, const char *dst,
                                       int window_id, struct leonos_ui_surface *ui)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
-        return -12;
-    }
     ret = installer_mkdir(dst);
     if (ret < 0 && ret != -17) {
         printf("[installer.elf] mkdir changed dir %s ret=%d\n", dst, ret);
         goto out;
     }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         printf("[installer.elf] list changed source dir %s ret=%d\n", src, ret);
         goto out;
@@ -1961,35 +2230,39 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
             goto out;
         }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
-            struct leonos_stat dst_st;
-            int dst_ret = leonos_stat_legacy(dst_child, &dst_st);
-            if (dst_ret == 0 && dst_st.type != LEONOS_FS_TYPE_DIR) {
+            int dst_type = path_type_nofollow(dst_child);
+            if (dst_type >= 0 && dst_type != LEONOS_FS_TYPE_DIR) {
                 ret = remove_path_recursive(dst_child);
                 if (ret < 0) {
                     goto out;
                 }
-            } else if (dst_ret < 0 && dst_ret != -2) {
-                ret = dst_ret;
+            } else if (dst_type < 0 && dst_type != -2) {
+                ret = dst_type;
                 goto out;
             }
             ret = copy_changed_dir_recursive(src_child, dst_child, window_id, ui);
-        } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+        } else if (entries[i].type == LEONOS_FS_TYPE_FILE ||
+                   entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
             uint8_t missing;
             uint8_t different;
-            struct leonos_stat dst_st;
-            int dst_ret = leonos_stat_legacy(dst_child, &dst_st);
-            if (dst_ret == 0 && dst_st.type != LEONOS_FS_TYPE_FILE) {
+            int dst_type = path_type_nofollow(dst_child);
+            if (dst_type >= 0 &&
+                dst_type != (int)entries[i].type) {
                 ret = remove_path_recursive(dst_child);
                 if (ret < 0) {
                     goto out;
                 }
-            } else if (dst_ret < 0 && dst_ret != -2) {
-                ret = dst_ret;
+            } else if (dst_type < 0 && dst_type != -2) {
+                ret = dst_type;
                 goto out;
             }
             ret = installer_files_equal(src_child, dst_child, &missing, &different);
             if (ret >= 0 && (missing || different)) {
-                ret = copy_file_path(src_child, dst_child, window_id, ui);
+                if (entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
+                    ret = copy_symlink_path(src_child, dst_child);
+                } else {
+                    ret = copy_file_path(src_child, dst_child, window_id, ui);
+                }
                 if (ret >= 0) {
                     ++copy_done;
                     show_copy_progress(window_id, ui, dst_child);
@@ -2013,6 +2286,11 @@ out:
 static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
 {
     int ret = copy_dir_recursive(INSTALL_ROOT_PAYLOAD, INSTALL_ROOT_MOUNT, window_id, ui);
+    if (!ret) ret = installer_write_fstab();
+    if (!ret && installer_setup_write(&setup, INSTALL_ROOT_MOUNT) < 0) {
+        ret = -errno;
+        set_status(T("Account setup failed", "账户创建失败"), strerror(errno));
+    }
     if (ret < 0) {
         printf("[installer.elf] root payload copy failed src=%s dst=%s ret=%d\n",
                INSTALL_ROOT_PAYLOAD, INSTALL_ROOT_MOUNT, ret);
@@ -2029,7 +2307,7 @@ static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
      * explicitly and make the operation idempotent for filesystems that keep
      * an end-marker or directory cache across the preceding copy. */
     {
-        const char *state_path = "/target/system/state";
+        const char *state_path = TARGET_VAR_LIB_LEONOS;
         struct leonos_stat state_st;
         ret = leonos_stat_legacy(state_path, &state_st);
         if (ret == 0) {
@@ -2065,116 +2343,64 @@ static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
     }
 }
 
-static int replace_system_payload(int window_id, struct leonos_ui_surface *ui)
-{
-    static const char *const dirs[] = {
-        "system/apps",
-        "system/certs",
-        "system/fonts",
-        "system/lib",
-        "system/resources",
-    };
-    static const char *const root_files[] = {
-        "system/kerneldebug.sys",
-        "system/osmlayer.manifest",
-    };
-    static const char *const esp_files[] = {
-        "system/kernel.sys",
-        "system/middlelayer.sys",
-    };
-    for (uint32_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); ++i) {
-        int ret = replace_payload_dir_at(INSTALL_ROOT_PAYLOAD, INSTALL_ROOT_MOUNT,
-                                         dirs[i], dirs[i], window_id, ui);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-    for (uint32_t i = 0; i < sizeof(root_files) / sizeof(root_files[0]); ++i) {
-        char src[LEONOS_FS_PATH_LEN];
-        char dst[LEONOS_FS_PATH_LEN];
-        int ret;
-        if (path_join(src, sizeof(src), INSTALL_ROOT_PAYLOAD, root_files[i]) < 0 ||
-            path_join(dst, sizeof(dst), INSTALL_ROOT_MOUNT, root_files[i]) < 0) {
-            return -1;
-        }
-        ret = copy_file_path(src, dst, window_id, ui);
-        if (ret < 0) {
-            return ret;
-        }
-        ++copy_done;
-    }
-    for (uint32_t i = 0; i < sizeof(esp_files) / sizeof(esp_files[0]); ++i) {
-        char src[LEONOS_FS_PATH_LEN];
-        char dst[LEONOS_FS_PATH_LEN];
-        int ret;
-        if (path_join(src, sizeof(src), INSTALL_ESP_PAYLOAD, esp_files[i]) < 0 ||
-            path_join(dst, sizeof(dst), INSTALL_ESP_MOUNT, esp_files[i]) < 0) {
-            return -1;
-        }
-        ret = copy_file_path(src, dst, window_id, ui);
-        if (ret < 0) {
-            return ret;
-        }
-        ++copy_done;
-    }
-    return 0;
-}
-
 static int check_update_target_required(void)
 {
-    static const char *const required_root_dirs[] = {
-        "/target/docs",
-        "/target/system",
-        "/target/system/apps",
-        "/target/system/config",
-        "/target/system/state",
-        "/target/programs",
-        "/target/drivers",
+    /* Updates accept only the current non-usr-merge root. Old images need
+     * a fresh installation; never mutate them in an attempted migration. */
+    static const char *const required_dirs[] = {
+        "/etc/leonos", "/var/lib/leonos", "/bin", "/sbin", "/lib",
+        "/usr", "/usr/bin", "/usr/sbin", "/usr/lib",
+        LEONOS_LAYOUT_LEONOS_APPS, LEONOS_LAYOUT_LEONOS_DRIVERS,
     };
-    static const char *const required_esp_dirs[] = {
-        "/target/boot",
-        "/target/boot/EFI",
-        "/target/boot/system",
-    };
-    static const char *const required_root_files[] = {
-        "/target/system/apps/desktop/desktop.elf",
-    };
-    static const char *const required_esp_files[] = {
-        "/target/boot/loader.elf",
-        "/target/boot/system/kernel.sys",
-        "/target/boot/system/middlelayer.sys",
-    };
-    for (uint32_t i = 0; i < sizeof(required_root_dirs) / sizeof(required_root_dirs[0]); ++i) {
-        int ret = path_has_type(required_root_dirs[i], LEONOS_FS_TYPE_DIR);
-        if (ret < 0) {
+    for (uint32_t i = 0; i < sizeof(required_dirs) / sizeof(required_dirs[0]); ++i) {
+        char path[LEONOS_FS_PATH_LEN];
+        if (path_join(path, sizeof(path), INSTALL_ROOT_MOUNT, required_dirs[i]) < 0)
+            return -ENAMETOOLONG;
+        if (path_type_nofollow(path) != LEONOS_FS_TYPE_DIR) {
+            set_status(T("Unsupported root layout; use a fresh ext2 installation",
+                         "不支持此根目录布局，请执行 ext2 全新安装"), path);
+            return -EINVAL;
+        }
+    }
+    {
+        char desktop[LEONOS_FS_PATH_LEN];
+        int found = 0;
+        if (path_join(desktop, sizeof(desktop), TARGET_LEONOS_APPS,
+                      "desktop/desktop.elf") == 0 &&
+            path_has_type(desktop, LEONOS_FS_TYPE_FILE) == 0) {
+            found = 1;
+        }
+        if (!found) {
             set_status(T("Existing LeonOS 4 was not detected", "未检测到现有 LeonOS 4"),
-                       required_root_dirs[i]);
-            return ret;
+                       desktop);
+            return -2;
         }
     }
-    for (uint32_t i = 0; i < sizeof(required_esp_dirs) / sizeof(required_esp_dirs[0]); ++i) {
-        int ret = path_has_type(required_esp_dirs[i], LEONOS_FS_TYPE_DIR);
-        if (ret < 0) {
-            set_status(T("Existing LeonOS 4 boot partition was not detected", "未检测到现有 LeonOS 4 启动分区"),
-                       required_esp_dirs[i]);
-            return ret;
+    {
+        static const char *const esp_dirs[] = {"boot", "boot/EFI"};
+        for (uint32_t i = 0; i < sizeof(esp_dirs) / sizeof(esp_dirs[0]); ++i) {
+            char path[LEONOS_FS_PATH_LEN];
+            if (path_join(path, sizeof(path), INSTALL_ROOT_MOUNT, esp_dirs[i]) < 0 ||
+                path_has_type(path, LEONOS_FS_TYPE_DIR) < 0) {
+                set_status(T("Existing LeonOS 4 boot partition was not detected",
+                             "未检测到现有 LeonOS 4 启动分区"), path);
+                return -2;
+            }
         }
     }
-    for (uint32_t i = 0; i < sizeof(required_root_files) / sizeof(required_root_files[0]); ++i) {
-        int ret = path_has_type(required_root_files[i], LEONOS_FS_TYPE_FILE);
-        if (ret < 0) {
-            set_status(T("Existing LeonOS 4 was not detected", "未检测到现有 LeonOS 4"),
-                       required_root_files[i]);
-            return ret;
+    {
+        char loader[LEONOS_FS_PATH_LEN];
+        if (path_join(loader, sizeof(loader), TARGET_BOOT, "loader.elf") < 0 ||
+            path_has_type(loader, LEONOS_FS_TYPE_FILE) < 0) {
+            set_status(T("Existing LeonOS 4 boot partition was not detected",
+                         "未检测到现有 LeonOS 4 启动分区"), loader);
+            return -2;
         }
     }
-    for (uint32_t i = 0; i < sizeof(required_esp_files) / sizeof(required_esp_files[0]); ++i) {
-        int ret = path_has_type(required_esp_files[i], LEONOS_FS_TYPE_FILE);
-        if (ret < 0) {
-            set_status(T("Existing LeonOS 4 boot partition was not detected", "未检测到现有 LeonOS 4 启动分区"),
-                       required_esp_files[i]);
-            return ret;
-        }
+    if (path_has_type(TARGET_ESP_KERNEL, LEONOS_FS_TYPE_FILE) < 0) {
+        set_status(T("Existing LeonOS 4 boot partition was not detected",
+                     "未检测到现有 LeonOS 4 启动分区"), TARGET_ESP_KERNEL);
+        return -2;
     }
     return 0;
 }
@@ -2182,21 +2408,27 @@ static int check_update_target_required(void)
 static int check_update_payload_required(void)
 {
     static const char *const required_dirs[] = {
-        "/install/root/docs",
-        "/install/root/system",
-        "/install/root/drivers",
-        "/install/root/system/apps",
-        "/install/root/system/config",
-        "/install/root/system/lib",
-        "/install/root/programs",
-        "/install/esp/grub",
-        "/install/esp/system",
-        "/install/esp/EFI",
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_ETC_LEONOS,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_VAR_LIB_LEONOS,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_USR_LIB,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_LIB,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_APPS,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_DRIVERS,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_DOC,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_FONTS,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_RESOURCES,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LICENSES,
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_ETC_SSL_CERTS,
+        INSTALL_ESP_PAYLOAD "/grub",
+        INSTALL_ESP_PAYLOAD "/leonos",
+        INSTALL_ESP_PAYLOAD "/EFI",
     };
     static const char *const required_files[] = {
-        "/install/root/system/kerneldebug.sys",
-        "/install/root/system/lib/ld-leonos.elf",
-        "/install/root/system/lib/libleonos.so.1",
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_LIB "/kerneldebug.sys",
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LIB "/ld-musl-x86_64.so.1",
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LIB "/libc.so",
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LIB "/libmimalloc.so.3",
+        INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_LIB "/libleonos.so.2",
     };
     for (uint32_t i = 0; i < sizeof(required_dirs) / sizeof(required_dirs[0]); ++i) {
         int ret = path_has_type(required_dirs[i], LEONOS_FS_TYPE_DIR);
@@ -2243,10 +2475,35 @@ static int add_update_app_entry(const char *name,
     return 0;
 }
 
+/* Application packages from the old /programs tree are optional update
+ * entries.  System packages are replaced as part of the core payload, so the
+ * manifest's system=1 marker keeps them out of the optional list. */
+static int app_package_is_system(const char *package_dir)
+{
+    char manifest[LEONOS_FS_PATH_LEN];
+    char text[512];
+    int fd;
+    long got;
+    if (path_join(manifest, sizeof(manifest), package_dir, "manifest.ini") < 0) {
+        return 0;
+    }
+    fd = open(manifest, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    got = read(fd, text, sizeof(text) - 1U);
+    close(fd);
+    if (got <= 0) {
+        return 0;
+    }
+    text[got] = 0;
+    return strstr(text, "system=1") != 0 || strstr(text, "system=true") != 0;
+}
+
 static int scan_update_apps(void)
 {
-    static const char *const source_root = INSTALL_ROOT_PAYLOAD "/programs";
-    static const char *const target_root = "/target/programs";
+    static const char *const source_root = INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_APPS;
+    static const char *const target_root = TARGET_LEONOS_APPS;
     struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
     uint32_t count = 0;
     int ret;
@@ -2278,6 +2535,9 @@ static int scan_update_apps(void)
         if (path_join(src_package, sizeof(src_package), source_root, entries[i].name) < 0 ||
             path_join(dst_package, sizeof(dst_package), target_root, entries[i].name) < 0) {
             return -1;
+        }
+        if (app_package_is_system(src_package)) {
+            continue;
         }
         copy_text(elf_name, sizeof(elf_name), entries[i].name);
         while (elf_name[name_len]) {
@@ -2373,7 +2633,7 @@ static int count_selected_update_work(void)
 static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui)
 {
     int ret;
-    ret = installer_mkdir("/target/programs");
+    ret = installer_mkdir(TARGET_LEONOS_APPS);
     if (ret < 0 && ret != -17) {
         return ret;
     }
@@ -2382,7 +2642,8 @@ static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui
             continue;
         }
         char package_dir[LEONOS_FS_PATH_LEN];
-        if (path_join(package_dir, sizeof(package_dir), "/target/programs", update_apps[i].name) < 0) {
+        if (path_join(package_dir, sizeof(package_dir), TARGET_LEONOS_APPS,
+                      update_apps[i].name) < 0) {
             return -1;
         }
         {
@@ -2416,8 +2677,8 @@ static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui
 static int write_target_locale(void)
 {
     const char *text = installer_lang == LEONOS_LANG_ZH ? "lang=zh\n" : "lang=en\n";
-    int fd = open("/target/system/config/locale.conf",
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    int fd = open(TARGET_ETC_LEONOS "/locale.conf",
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     long wrote;
     if (fd < 0) {
         return fd;
@@ -2445,14 +2706,14 @@ static int write_target_theme(void)
     uint32_t input_len = 0;
     uint32_t output_len = 0;
     uint32_t offset = 0;
-    int ret = leonos_stat_legacy("/target/system/config/display.conf", &stat_info);
+    int ret = leonos_stat_legacy(TARGET_ETC_LEONOS "/display.conf", &stat_info);
     if (ret == 0) {
         int fd;
         long got;
         if (stat_info.type != LEONOS_FS_TYPE_FILE || stat_info.size >= sizeof(input)) {
             return -27;
         }
-        fd = open("/target/system/config/display.conf", LEONOS_O_RDONLY, 0);
+        fd = open(TARGET_ETC_LEONOS "/display.conf", LEONOS_O_RDONLY, 0);
         if (fd < 0) {
             return fd;
         }
@@ -2496,8 +2757,8 @@ static int write_target_theme(void)
         return -27;
     }
     {
-        int fd = open("/target/system/config/display.conf",
-                      LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+        int fd = open(TARGET_ETC_LEONOS "/display.conf",
+                      LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
         long wrote;
         if (fd < 0) {
             return fd;
@@ -2537,7 +2798,7 @@ static void finish_install(int window_id, struct leonos_ui_surface *ui, int ret,
         set_error_status(prefix, ret);
         progress_value = 0;
     } else {
-        printf("[installer.elf] %s completed successfully\n",
+        fprintf(stderr, "[installer.elf] %s completed successfully\n",
                install_mode == INSTALL_MODE_UPDATE ? "update" : "installation");
         install_success = 1;
         progress_value = 100;
@@ -2591,6 +2852,390 @@ static void tty_perform_update(void)
     perform_update(0, 0);
 }
 
+
+/* Helpers for updates within the current rootfs layout. */
+
+static int installer_mkdir_p(const char *path)
+{
+    char buffer[LEONOS_FS_PATH_LEN];
+    uint32_t i;
+    if (!path || !path[0] || strlen(path) >= sizeof(buffer)) {
+        return path && path[0] ? -36 : -22;
+    }
+    copy_text(buffer, sizeof(buffer), path);
+    for (i = 1; buffer[i]; ++i) {
+        if (buffer[i] == '/') {
+            buffer[i] = 0;
+            int ret = installer_mkdir(buffer);
+            if (ret < 0 && ret != -17) {
+                return ret;
+            }
+            buffer[i] = '/';
+        }
+    }
+    return installer_mkdir(buffer);
+}
+
+static int apply_directory_metadata(const char *src, const char *dst)
+{
+    struct stat status;
+    if (!src || !dst || stat(src, &status) < 0) {
+        return src && dst ? -errno : -22;
+    }
+    if (chown(dst, status.st_uid, status.st_gid) < 0) {
+        return -errno;
+    }
+    return chmod(dst, status.st_mode & 07777) < 0 ? -errno : 0;
+}
+
+static int payload_has_app_package(const char *name)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    if (path_join(path, sizeof(path), INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_APPS,
+                  name) < 0) {
+        return 0;
+    }
+    return path_has_type(path, LEONOS_FS_TYPE_DIR) == 0;
+}
+
+/* Require real hierarchy components. The standard links are copied from
+ * the same layout table as fresh images; no old-root transformation occurs. */
+static int apply_runtime_root_paths(void)
+{
+    static const struct { const char *path; const char *target; } links[] = {
+#define ROOT_LINK(path, target) {INSTALL_ROOT_MOUNT path, target},
+        LEONOS_ROOTFS_SYMLINKS(ROOT_LINK)
+#undef ROOT_LINK
+    };
+    for (uint32_t i = 0; i < sizeof(links) / sizeof(links[0]); ++i) {
+        int type = path_type_nofollow(links[i].path);
+        if (type == -ENOENT) {
+            if (symlink(links[i].target, links[i].path) < 0) return -errno;
+        } else if (type == LEONOS_FS_TYPE_SYMLINK) {
+            char target[LEONOS_FS_PATH_LEN];
+            ssize_t length = readlink(links[i].path, target, sizeof(target) - 1);
+            if (length < 0) return -errno;
+            target[length] = 0;
+            if (strcmp(target, links[i].target)) return -EEXIST;
+        } else {
+            return type < 0 ? type : -EEXIST;
+        }
+    }
+    return 0;
+}
+static int ensure_runtime_layout_dirs(void)
+{
+    static const struct {
+        const char *path;
+        uint32_t mode;
+    } dirs[] = {
+#define ROOT_DIR(path, mode) {INSTALL_ROOT_MOUNT path, mode},
+        LEONOS_ROOTFS_DIRECTORIES(ROOT_DIR)
+#undef ROOT_DIR
+    };
+    for (uint32_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); ++i) {
+        int ret = installer_mkdir_p(dirs[i].path);
+        if (ret < 0 && ret != -17) return ret;
+        if (chown(dirs[i].path, 0, 0) < 0 ||
+            chmod(dirs[i].path, dirs[i].mode) < 0) return -errno;
+    }
+    return 0;
+}
+
+/* Copy new payload paths over an existing tree without deleting unrelated
+ * target entries.  System files are refreshed; user-created commands and
+ * packages survive. */
+static int overlay_dir_recursive(const char *src, const char *dst,
+                                 int window_id, struct leonos_ui_surface *ui)
+{
+    struct leonos_dir_entry *entries = NULL;
+    uint32_t count = 0;
+    int ret;
+    int dst_type = path_type_nofollow(dst);
+    if (dst_type == -2) {
+        ret = installer_mkdir_p(dst);
+        if (ret < 0 && ret != -17) return ret;
+        ret = apply_directory_metadata(src, dst);
+        if (ret < 0) return ret;
+    } else if (dst_type != LEONOS_FS_TYPE_DIR) {
+        printf("[installer.elf] overlay target is not a directory: %s type=%d\n",
+               dst, dst_type);
+        return -17;
+    }
+    ret = installer_list_dir(src, &entries, &count);
+    if (ret < 0) return ret;
+    for (uint32_t i = 0; i < count; ++i) {
+        char src_child[LEONOS_FS_PATH_LEN];
+        char dst_child[LEONOS_FS_PATH_LEN];
+        if (name_is_dot(entries[i].name)) continue;
+        if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
+            path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
+            free(entries);
+            return -1;
+        }
+        if (!installer_setup_include(&setup, src_child)) continue;
+        if (strcmp(src_child, INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_APPS) == 0) {
+            /* Packages have their own system/optional selection below. */
+            continue;
+        }
+        if (strcmp(src, INSTALL_ROOT_PAYLOAD "/usr/bin") == 0 &&
+            payload_has_app_package(entries[i].name)) {
+            char package[LEONOS_FS_PATH_LEN];
+            if (path_join(package, sizeof(package),
+                          INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_APPS,
+                          entries[i].name) < 0) { free(entries); return -ENAMETOOLONG; }
+            int publish = app_package_is_system(package);
+            if (!publish) {
+                char executable[LEONOS_FS_PATH_LEN];
+                int size = snprintf(executable, sizeof(executable), "%s/%s/%s.elf",
+                                    TARGET_LEONOS_APPS, entries[i].name, entries[i].name);
+                if (size < 0 || (size_t)size >= sizeof(executable)) {
+                    free(entries); return -ENAMETOOLONG;
+                }
+                publish = path_has_type(executable, LEONOS_FS_TYPE_FILE) == 0;
+            }
+            for (uint32_t j = 0; j < update_app_count; ++j) {
+                if (!strcmp(update_apps[j].name, entries[i].name)) {
+                    publish = update_apps[j].selected;
+                    break;
+                }
+            }
+            if (!publish) continue; /* preserve the unchecked app's existing entry */
+        }
+        if (entries[i].type == LEONOS_FS_TYPE_DIR) {
+            ret = overlay_dir_recursive(src_child, dst_child, window_id, ui);
+        } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+            int child_type = path_type_nofollow(dst_child);
+            if (child_type >= 0 && child_type != LEONOS_FS_TYPE_FILE &&
+                child_type != LEONOS_FS_TYPE_SYMLINK) {
+                ret = -17;
+            } else {
+                ret = copy_file_path(src_child, dst_child, window_id, ui);
+                if (ret >= 0) ++copy_done;
+            }
+        } else if (entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
+            int child_type = path_type_nofollow(dst_child);
+            if (child_type == -2 || child_type == LEONOS_FS_TYPE_FILE ||
+                child_type == LEONOS_FS_TYPE_SYMLINK) {
+                ret = copy_symlink_path(src_child, dst_child);
+            } else {
+                ret = -17;
+            }
+            if (ret >= 0 && child_type == -2) ++copy_done;
+        } else {
+            ret = 0;
+        }
+        if (ret < 0) {
+            printf("[installer.elf] layout overlay conflict src=%s dst=%s ret=%d\n",
+                   src_child, dst_child, ret);
+            free(entries);
+            return ret;
+        }
+    }
+    free(entries);
+    return 0;
+}
+
+/* Copy defaults only when the destination does not already exist.  Used for
+ * /etc and persistent state so an update never overwrites user settings. */
+static int merge_missing_dir_recursive(const char *src, const char *dst,
+                                       int window_id, struct leonos_ui_surface *ui)
+{
+    struct leonos_dir_entry *entries = NULL;
+    uint32_t count = 0;
+    int ret;
+    int dst_type = path_type_nofollow(dst);
+    if (dst_type == -2) {
+        ret = installer_mkdir_p(dst);
+        if (ret < 0 && ret != -17) return ret;
+        ret = apply_directory_metadata(src, dst);
+        if (ret < 0) return ret;
+    } else if (dst_type != LEONOS_FS_TYPE_DIR) {
+        return -17;
+    }
+    ret = installer_list_dir(src, &entries, &count);
+    if (ret < 0) return ret;
+    for (uint32_t i = 0; i < count; ++i) {
+        char src_child[LEONOS_FS_PATH_LEN];
+        char dst_child[LEONOS_FS_PATH_LEN];
+        if (name_is_dot(entries[i].name)) continue;
+        if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
+            path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
+            free(entries);
+            return -1;
+        }
+        int dst_type = path_type_nofollow(dst_child);
+        if (entries[i].type == LEONOS_FS_TYPE_DIR) {
+            if (dst_type == -2) {
+                ret = installer_mkdir_p(dst_child);
+                if (ret < 0 && ret != -17) {
+                    free(entries);
+                    return ret;
+                }
+                ret = apply_directory_metadata(src_child, dst_child);
+            } else if (dst_type == LEONOS_FS_TYPE_DIR) {
+                ret = 0;
+            } else {
+                ret = -17;
+            }
+            if (ret >= 0) {
+                ret = merge_missing_dir_recursive(src_child, dst_child, window_id, ui);
+            }
+        } else if (dst_type == -2) {
+            if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+                ret = copy_file_path(src_child, dst_child, window_id, ui);
+            } else if (entries[i].type == LEONOS_FS_TYPE_SYMLINK) {
+                ret = copy_symlink_path(src_child, dst_child);
+            } else {
+                ret = -20;
+            }
+            if (ret >= 0) ++copy_done;
+        } else {
+            /* Existing user file or user-modified symlink: keep it. */
+            ret = 0;
+        }
+        if (ret < 0) {
+            printf("[installer.elf] default merge conflict src=%s dst=%s ret=%d\n",
+                   src_child, dst_child, ret);
+            free(entries);
+            return ret;
+        }
+    }
+    free(entries);
+    return 0;
+}
+
+static int sync_application_packages(int window_id, struct leonos_ui_surface *ui)
+{
+    struct leonos_dir_entry *entries = NULL;
+    uint32_t count = 0;
+    int ret = installer_mkdir_p(TARGET_LEONOS_APPS);
+    if (ret < 0 && ret != -17) return ret;
+    /* Optional packages are handled by copy_selected_update_apps. */
+    ret = installer_list_dir(INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_APPS,
+                             &entries, &count);
+    if (ret < 0) return ret;
+    for (uint32_t i = 0; i < count; ++i) {
+        char source[LEONOS_FS_PATH_LEN];
+        char destination[LEONOS_FS_PATH_LEN];
+        if (entries[i].type != LEONOS_FS_TYPE_DIR || name_is_dot(entries[i].name)) {
+            continue;
+        }
+        if (path_join(source, sizeof(source),
+                      INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_APPS,
+                      entries[i].name) < 0 ||
+            path_join(destination, sizeof(destination), TARGET_LEONOS_APPS,
+                      entries[i].name) < 0) {
+            free(entries);
+            return -1;
+        }
+        if (!app_package_is_system(source)) continue;
+        ret = overlay_dir_recursive(source, destination, window_id, ui);
+        if (ret < 0) {
+            free(entries);
+            return ret;
+        }
+    }
+    free(entries);
+    entries = NULL;
+    count = 0;
+    /* Remove stale build-managed system packages; keep user packages. */
+    ret = installer_list_dir(TARGET_LEONOS_APPS, &entries, &count);
+    if (ret < 0) return ret;
+    for (uint32_t i = 0; i < count; ++i) {
+        char package[LEONOS_FS_PATH_LEN];
+        if (entries[i].type != LEONOS_FS_TYPE_DIR || name_is_dot(entries[i].name)) {
+            continue;
+        }
+        if (payload_has_app_package(entries[i].name)) {
+            continue;
+        }
+        if (path_join(package, sizeof(package), TARGET_LEONOS_APPS,
+                      entries[i].name) < 0) {
+            free(entries);
+            return -1;
+        }
+        if (!app_package_is_system(package)) {
+            continue;
+        }
+        ret = remove_path_recursive(package);
+        if (ret < 0) {
+            free(entries);
+            return ret;
+        }
+        char command[LEONOS_FS_PATH_LEN], expected[LEONOS_FS_PATH_LEN];
+        char current[LEONOS_FS_PATH_LEN];
+        int size = snprintf(expected, sizeof(expected), "../lib/leonos/apps/%s/%s.elf",
+                            entries[i].name, entries[i].name);
+        if (path_join(command, sizeof(command), TARGET_USR_BIN, entries[i].name) < 0 ||
+            size < 0 || (size_t)size >= sizeof(expected)) {
+            free(entries); return -ENAMETOOLONG;
+        }
+        if (path_type_nofollow(command) == LEONOS_FS_TYPE_SYMLINK) {
+            ssize_t length = readlink(command, current, sizeof(current) - 1);
+            if (length < 0) { free(entries); return -errno; }
+            current[length] = 0;
+            if (!strcmp(current, expected) && unlink(command) < 0) {
+                free(entries); return -errno;
+            }
+        }
+    }
+    free(entries);
+    return 0;
+}
+
+static int sync_system_payload(int window_id, struct leonos_ui_surface *ui)
+{
+    int ret;
+    if (leonos_account_legacy_check(INSTALL_ROOT_MOUNT) < 0) return -errno;
+    /* Retired security entry points must not depend on optional app metadata. */
+    const char *retired[] = {
+        INSTALL_ROOT_MOUNT "/usr/bin/authd",
+        INSTALL_ROOT_MOUNT "/usr/lib/leonos/apps/authd",
+    };
+    for (uint32_t i = 0; i < sizeof(retired) / sizeof(retired[0]); ++i) {
+        ret = remove_path_recursive(retired[i]);
+        if (ret < 0) return ret;
+    }
+    /* Refresh build-managed commands, libraries, resources and fonts while
+     * keeping unrelated files that the administrator may have installed. */
+    ret = overlay_dir_recursive(INSTALL_ROOT_PAYLOAD "/bin", INSTALL_ROOT_MOUNT "/bin",
+                                window_id, ui);
+    if (ret < 0) return ret;
+    ret = overlay_dir_recursive(INSTALL_ROOT_PAYLOAD "/sbin", INSTALL_ROOT_MOUNT "/sbin",
+                                window_id, ui);
+    if (ret < 0) return ret;
+    ret = overlay_dir_recursive(INSTALL_ROOT_PAYLOAD "/lib", INSTALL_ROOT_MOUNT "/lib",
+                                window_id, ui);
+    if (ret < 0) return ret;
+    ret = overlay_dir_recursive(INSTALL_ROOT_PAYLOAD "/usr", INSTALL_ROOT_MOUNT "/usr",
+                                window_id, ui);
+    if (ret < 0) return ret;
+    if (path_type_nofollow(INSTALL_ROOT_PAYLOAD "/opt") == LEONOS_FS_TYPE_DIR) {
+        ret = overlay_dir_recursive(INSTALL_ROOT_PAYLOAD "/opt",
+                                    INSTALL_ROOT_MOUNT "/opt", window_id, ui);
+        if (ret < 0) return ret;
+    }
+    ret = merge_missing_dir_recursive(INSTALL_ROOT_PAYLOAD "/etc",
+                                      INSTALL_ROOT_MOUNT "/etc",
+                                      window_id, ui);
+    if (ret < 0) return ret;
+    ret = merge_missing_dir_recursive(INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_VAR_LIB_LEONOS,
+                                      TARGET_VAR_LIB_LEONOS, window_id, ui);
+    if (ret < 0) return ret;
+    ret = merge_missing_dir_recursive(INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_VAR_CACHE_LEONOS,
+                                      INSTALL_ROOT_MOUNT LEONOS_LAYOUT_VAR_CACHE_LEONOS,
+                                      window_id, ui);
+    if (ret < 0) return ret;
+    ret = sync_application_packages(window_id, ui);
+    if (ret < 0) return ret;
+    ret = ensure_runtime_layout_dirs();
+    if (ret < 0) return ret;
+    ret = apply_runtime_root_paths();
+    if (ret < 0) return ret;
+    return 0;
+}
+
 static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
 {
     int ret;
@@ -2606,6 +3251,11 @@ static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
     ret = installer_mount_targets(disks[selected_disk].path, 0);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Mount failed", "挂载失败"));
+        return;
+    }
+    if (leonos_account_legacy_check(INSTALL_ROOT_MOUNT) < 0) {
+        finish_install(window_id, ui, -errno,
+                       T("Legacy accounts require recovery before updating", "旧账户需完成受控迁移后再更新"));
         return;
     }
     show_progress(window_id, ui, 18,
@@ -2637,6 +3287,10 @@ static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
 static void perform_install(int window_id, struct leonos_ui_surface *ui)
 {
     int ret;
+    if (setup_error || !installer_setup_valid(&setup)) {
+        finish_install(window_id, ui, -EINVAL, T("Invalid installation settings", "安装设置无效"));
+        return;
+    }
     if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
         return;
     }
@@ -2649,7 +3303,7 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
     copy_done_bytes = 0;
 
     show_progress(window_id, ui, 2, "Preparing target disk", "");
-    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (exFAT or ext2), ESP: /target/boot (FAT32)");
+    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (ext2 for new installs; exFAT or ext2 for updates), ESP: /target/boot (FAT32)");
     ret = installer_mount_targets(disks[selected_disk].path, 1);
     if (ret < 0) {
         finish_install(window_id, ui, ret, "Mount failed");
@@ -2674,6 +3328,10 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
         return;
     }
 
+    explicit_bzero(setup.password, sizeof(setup.password));
+    explicit_bzero(setup.password_confirm, sizeof(setup.password_confirm));
+    explicit_bzero(setup.root_password, sizeof(setup.root_password));
+    explicit_bzero(setup.root_password_confirm, sizeof(setup.root_password_confirm));
     ret = write_target_preferences();
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Could not save installed preferences", "无法保存安装后偏好设置"));
@@ -2686,27 +3344,9 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
 
 static void perform_update(int window_id, struct leonos_ui_surface *ui)
 {
-    static const char *const boot_dirs[] = {
-        "grub",
-        "EFI",
-    };
+    static const char *const boot_dirs[] = {"leonos", "grub", "EFI"};
     static const char *const boot_files[] = {
         "loader.elf",
-    };
-    static const char *const root_system_dirs[] = {
-        "system/apps",
-        "system/certs",
-        "system/fonts",
-        "system/lib",
-        "system/resources",
-    };
-    static const char *const root_system_files[] = {
-        "system/kerneldebug.sys",
-        "system/osmlayer.manifest",
-    };
-    static const char *const boot_system_files[] = {
-        "system/kernel.sys",
-        "system/middlelayer.sys",
     };
     int ret;
     if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
@@ -2721,7 +3361,7 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
     copy_done_bytes = 0;
 
     show_progress(window_id, ui, 2, T("Mounting target filesystems", "正在挂载目标文件系统"),
-                  T("Root: /target; ESP: /target/boot", "根分区：/target；ESP：/target/boot"));
+                  T("Root: /target; ESP: /target/boot", "根分区：/target；ESP: /target/boot"));
     ret = installer_mount_targets(disks[selected_disk].path, 0);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Mount failed", "挂载失败"));
@@ -2740,8 +3380,24 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
         finish_install(window_id, ui, ret, T("Existing system check failed", "现有系统检测失败"));
         return;
     }
+    if (installer_root_filesystem == LEONOS_BLOCK_FILESYSTEM_EXFAT) {
+        /* The current root contract needs real symlinks; exFAT cannot store
+         * them, so an update would silently produce an unusable namespace.
+         * Refuse instead of materializing directory copies. */
+        finish_install(window_id, ui, -38,
+                       T("exFAT root cannot carry the current symlink layout; use a fresh ext2 install",
+                         "exFAT 根分区无法承载当前符号链接布局，请改为 ext2 全新安装"));
+        return;
+    }
 
-    show_progress(window_id, ui, 18, T("Scanning update payload", "正在扫描更新负载"),
+    ret = ensure_runtime_layout_dirs();
+    if (ret >= 0) ret = apply_runtime_root_paths();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Invalid root layout", "根目录布局无效"));
+        return;
+    }
+
+    show_progress(window_id, ui, 22, T("Scanning update payload", "正在扫描更新负载"),
                   T("Root and boot payloads", "根分区和启动分区负载"));
     for (uint32_t i = 0; i < sizeof(boot_dirs) / sizeof(boot_dirs[0]); ++i) {
         char src[LEONOS_FS_PATH_LEN];
@@ -2763,40 +3419,33 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
             return;
         }
     }
-    for (uint32_t i = 0; i < sizeof(root_system_dirs) / sizeof(root_system_dirs[0]); ++i) {
-        char src[LEONOS_FS_PATH_LEN];
-        if (path_join(src, sizeof(src), INSTALL_ROOT_PAYLOAD, root_system_dirs[i]) < 0) {
-            finish_install(window_id, ui, -1, T("Payload path is too long", "负载路径过长"));
-            return;
-        }
-        ret = count_files_recursive(src, &copy_total);
-        if (ret < 0) {
-            finish_install(window_id, ui, ret, T("Payload scan failed", "扫描安装负载失败"));
-            return;
-        }
-    }
-    for (uint32_t i = 0; i < sizeof(root_system_files) / sizeof(root_system_files[0]); ++i) {
-        char src[LEONOS_FS_PATH_LEN];
-        if (path_join(src, sizeof(src), INSTALL_ROOT_PAYLOAD, root_system_files[i]) < 0 ||
-            add_file_copy_work(src) < 0) {
-            finish_install(window_id, ui, -1, T("Payload scan failed", "扫描安装负载失败"));
-            return;
-        }
-    }
-    for (uint32_t i = 0; i < sizeof(boot_system_files) / sizeof(boot_system_files[0]); ++i) {
-        char src[LEONOS_FS_PATH_LEN];
-        if (path_join(src, sizeof(src), INSTALL_ESP_PAYLOAD, boot_system_files[i]) < 0 ||
-            add_file_copy_work(src) < 0) {
-            finish_install(window_id, ui, -1, T("Payload scan failed", "扫描安装负载失败"));
-            return;
+    {
+        static const char *const payload_roots[] = {
+            "/usr", "/etc", "/opt", "/var",
+        };
+        for (uint32_t i = 0; i < sizeof(payload_roots) / sizeof(payload_roots[0]); ++i) {
+            char src[LEONOS_FS_PATH_LEN];
+            if (path_join(src, sizeof(src), INSTALL_ROOT_PAYLOAD, payload_roots[i] + 1) < 0) {
+                finish_install(window_id, ui, -1, T("Payload path is too long", "负载路径过长"));
+                return;
+            }
+            if (path_type_nofollow(src) != LEONOS_FS_TYPE_DIR) {
+                continue;
+            }
+            ret = count_files_recursive(src, &copy_total);
+            if (ret < 0) {
+                finish_install(window_id, ui, ret, T("Payload scan failed", "扫描安装负载失败"));
+                return;
+            }
         }
     }
-    ret = count_files_recursive(INSTALL_ROOT_PAYLOAD "/docs", &copy_total);
+    ret = count_files_recursive(INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_DOC, &copy_total);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Payload scan failed", "扫描安装负载失败"));
         return;
     }
-    ret = count_changed_files_recursive(INSTALL_ROOT_PAYLOAD "/drivers", "/target/drivers");
+    ret = count_changed_files_recursive(INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_DRIVERS,
+                                        TARGET_LEONOS_DRIVERS);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Driver scan failed", "驱动程序扫描失败"));
         return;
@@ -2808,31 +3457,9 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
     }
 
     show_progress(window_id, ui, 35, T("Replacing core system files", "正在替换核心系统文件"),
-                  T("boot partition and system apps", "启动分区和系统应用"));
-    for (uint32_t i = 0; i < sizeof(boot_dirs) / sizeof(boot_dirs[0]); ++i) {
-        ret = replace_payload_dir_at(INSTALL_ESP_PAYLOAD, INSTALL_ESP_MOUNT,
-                                     boot_dirs[i], boot_dirs[i], window_id, ui);
-        if (ret < 0) {
-            finish_install(window_id, ui, ret, T("Core update failed", "核心系统更新失败"));
-            return;
-        }
-    }
-    for (uint32_t i = 0; i < sizeof(boot_files) / sizeof(boot_files[0]); ++i) {
-        char src[LEONOS_FS_PATH_LEN];
-        char dst[LEONOS_FS_PATH_LEN];
-        if (path_join(src, sizeof(src), INSTALL_ESP_PAYLOAD, boot_files[i]) < 0 ||
-            path_join(dst, sizeof(dst), INSTALL_ESP_MOUNT, boot_files[i]) < 0) {
-            finish_install(window_id, ui, -1, T("Payload path is too long", "负载路径过长"));
-            return;
-        }
-        ret = copy_file_path(src, dst, window_id, ui);
-        if (ret < 0) {
-            finish_install(window_id, ui, ret, T("Core update failed", "核心系统更新失败"));
-            return;
-        }
-        ++copy_done;
-    }
-    ret = replace_system_payload(window_id, ui);
+                  T("boot partition, libraries and application packages",
+                    "启动分区、库和应用程序包"));
+    ret = sync_system_payload(window_id, ui);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Core update failed", "核心系统更新失败"));
         return;
@@ -2840,8 +3467,10 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
 
     show_progress(window_id, ui, copy_progress_percent(),
                   T("Updating help documents", "正在更新帮助文档"),
-                  T("Destination: /target/docs", "目标: /target/docs"));
-    ret = merge_dir_recursive(INSTALL_ROOT_PAYLOAD "/docs", "/target/docs", window_id, ui);
+                  T("Destination: /target/usr/share/doc/leonos",
+                    "目标：/target/usr/share/doc/leonos"));
+    ret = merge_dir_recursive(INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_DOC,
+                              TARGET_LEONOS_DOC, window_id, ui);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Help document update failed", "帮助文档更新失败"));
         return;
@@ -2849,10 +3478,10 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
 
     show_progress(window_id, ui, copy_progress_percent(),
                   T("Updating hardware drivers", "正在更新硬件驱动程序"),
-                  T("Destination: /target/drivers; extra files are kept.",
-                    "目标：/target/drivers；多出的文件会保留。"));
-    ret = copy_changed_dir_recursive(INSTALL_ROOT_PAYLOAD "/drivers", "/target/drivers",
-                                     window_id, ui);
+                  T("Destination: /target/usr/lib/leonos/drivers; extra files are kept.",
+                    "目标：/target/usr/lib/leonos/drivers；多出的文件会保留。"));
+    ret = copy_changed_dir_recursive(INSTALL_ROOT_PAYLOAD LEONOS_LAYOUT_LEONOS_DRIVERS,
+                                     TARGET_LEONOS_DRIVERS, window_id, ui);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Driver update failed", "驱动程序更新失败"));
         return;
@@ -2860,10 +3489,33 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
 
     show_progress(window_id, ui, copy_progress_percent(),
                   T("Updating selected programs", "正在更新已选程序"),
-                  T("Destination: /target/programs", "目标: /target/programs"));
+                  T("Destination: /target/usr/lib/leonos/apps",
+                    "目标：/target/usr/lib/leonos/apps"));
     ret = copy_selected_update_apps(window_id, ui);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Program update failed", "程序更新失败"));
+        return;
+    }
+
+    /* Publish boot files only after the root payload is complete. Each file
+     * is replaced after its copy succeeds; never delete the EFI/GRUB tree. */
+    for (uint32_t i = 0; i < sizeof(boot_dirs) / sizeof(boot_dirs[0]); ++i) {
+        char src[LEONOS_FS_PATH_LEN], dst[LEONOS_FS_PATH_LEN];
+        if (path_join(src, sizeof(src), INSTALL_ESP_PAYLOAD, boot_dirs[i]) < 0 ||
+            path_join(dst, sizeof(dst), INSTALL_ESP_MOUNT, boot_dirs[i]) < 0) {
+            finish_install(window_id, ui, -ENAMETOOLONG, T("Boot update failed", "启动更新失败"));
+            return;
+        }
+        ret = overlay_dir_recursive(src, dst, window_id, ui);
+        if (ret < 0) {
+            finish_install(window_id, ui, ret, T("Boot update failed", "启动更新失败"));
+            return;
+        }
+    }
+    ret = copy_file_path(INSTALL_ESP_PAYLOAD "/loader.elf",
+                         INSTALL_ESP_MOUNT "/loader.elf", window_id, ui);
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Boot update failed", "启动更新失败"));
         return;
     }
 
@@ -2887,7 +3539,11 @@ static void go_back(void)
     } else if (page == PAGE_UPDATE_APPS) {
         page = PAGE_DISK;
     } else if (page == PAGE_CONFIRM) {
-        page = install_mode == INSTALL_MODE_UPDATE ? PAGE_UPDATE_APPS : PAGE_DISK;
+        page = install_mode == INSTALL_MODE_UPDATE ? PAGE_UPDATE_APPS : PAGE_ACCOUNTS;
+    } else if (page == PAGE_ACCOUNTS) {
+        page = PAGE_COMPONENTS;
+    } else if (page == PAGE_COMPONENTS) {
+        page = PAGE_DISK;
     } else if (page == PAGE_FINISH && !install_success) {
         page = PAGE_DISK;
     }
@@ -2930,12 +3586,23 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
             prepare_update_target(window_id, ui);
             return 0;
         }
+        page = PAGE_COMPONENTS;
+        dirty = 1;
+        return 0;
+    }
+    if (page == PAGE_UPDATE_APPS) {
+        installer_setup_existing(&setup, INSTALL_ROOT_MOUNT);
         page = PAGE_CONFIRM;
         reset_confirm();
         dirty = 1;
         return 0;
     }
-    if (page == PAGE_UPDATE_APPS) {
+    if (page == PAGE_COMPONENTS) {
+        page = PAGE_ACCOUNTS;
+        dirty = 1;
+        return 0;
+    }
+    if (page == PAGE_ACCOUNTS) {
         page = PAGE_CONFIRM;
         reset_confirm();
         dirty = 1;
@@ -2950,7 +3617,12 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
         return 0;
     }
     if (page == PAGE_FINISH && install_success) {
-        leonos_system_reboot();
+        fprintf(stderr, "[installer.elf] restart requested from completion page\n");
+        if (leonos_system_reboot() < 0) {
+            reboot_error = errno;
+            fprintf(stderr, "[installer.elf] restart failed: %s\n", strerror(reboot_error));
+            dirty = 1;
+        }
         return 0;
     }
     if (page == PAGE_FINISH) {
@@ -3130,6 +3802,29 @@ static int handle_mouse(int window_id, struct leonos_ui_surface *ui,
     if (!(event->buttons & 1u)) {
         return 0;
     }
+    if (page == PAGE_COMPONENTS) {
+        for (unsigned i = 0; i < 2; ++i) {
+            if (setup.component_available[i] && hit_rect_i(event->x, event->y,
+                l.content_x, l.content_y + 80 + i * 54, l.content_w, 24)) {
+                setup.component_selected[i] ^= 1;
+                component_focus = i;
+                dirty = 1;
+            }
+        }
+    }
+    if (page == PAGE_ACCOUNTS) {
+        for (unsigned i = 0; i < 5; ++i) {
+            if (hit_rect_i(event->x, event->y, l.content_x, l.content_y + 84 + i * 54,
+                           account_width(), LEONOS_FONT_H + 8)) {
+                for (unsigned j = 0; j < 5; ++j) account_edits[j].focused = 0;
+                account_focus = i;
+                leonos_ui_edit_state_handle_mouse(&account_edits[i], event->x, event->y,
+                    l.content_x, l.content_y + 84 + i * 54, account_width(), event->buttons);
+                dirty = 1;
+                break;
+            }
+        }
+    }
     if (page == PAGE_CONFIRM &&
         leonos_ui_edit_state_handle_mouse(&confirm_edit, event->x, event->y,
                                           l.content_x, l.confirm_edit_y, 220, event->buttons)) {
@@ -3176,6 +3871,32 @@ static int handle_mouse(int window_id, struct leonos_ui_surface *ui,
 static int handle_key(int window_id, struct leonos_ui_surface *ui,
                       const struct leonos_gui_app_event *event)
 {
+    if (page == PAGE_ACCOUNTS) {
+        if (event->pressed && (event->keycode == 15 || event->keycode == LEONOS_KEY_ENTER)) {
+            if (event->keycode == LEONOS_KEY_ENTER && account_focus == 4)
+                return go_primary(window_id, ui);
+            account_edits[account_focus].focused = 0;
+            account_focus = (account_focus + 1) % 5;
+            account_edits[account_focus].focused = 1;
+            dirty = 1;
+            return 0;
+        }
+        if (leonos_ui_edit_state_handle_key(&account_edits[account_focus], event->keycode, event->pressed))
+            dirty = 1;
+        if (event->keycode != KEY_ESCAPE) return 0;
+    }
+    if (page == PAGE_COMPONENTS && event->pressed) {
+        if (event->keycode == 15 || event->keycode == KEY_UP || event->keycode == KEY_DOWN) {
+            component_focus ^= 1;
+            dirty = 1;
+            return 0;
+        }
+        if (event->keycode == KEY_SPACE) {
+            if (setup.component_available[component_focus]) setup.component_selected[component_focus] ^= 1;
+            dirty = 1;
+            return 0;
+        }
+    }
     if (event->type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event->pressed) {
         if (event->keycode == KEY_ESCAPE && page != PAGE_PROGRESS) {
             return 1;
@@ -3233,10 +3954,24 @@ int main(void)
     struct installer_tty_context tty_context;
     int window_id;
 
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setup_error = installer_setup_load(&setup, "/install/components.list", INSTALL_ROOT_PAYLOAD);
+    if (setup_error) {
+        fprintf(stderr, "[installer.elf] component manifest unavailable: %s\n", strerror(errno));
+        return 1;
+    }
+    leonos_ui_edit_state_init(&account_edits[0], setup.username, sizeof(setup.username));
+    leonos_ui_edit_state_init(&account_edits[1], setup.password, sizeof(setup.password));
+    leonos_ui_edit_state_init(&account_edits[2], setup.password_confirm, sizeof(setup.password_confirm));
+    leonos_ui_edit_state_init(&account_edits[3], setup.root_password, sizeof(setup.root_password));
+    leonos_ui_edit_state_init(&account_edits[4], setup.root_password_confirm, sizeof(setup.root_password_confirm));
+    account_edits[0].focused = 1;
+
     if (isatty(STDIN_FILENO)) {
         installer_tty_mode = 1;
         installer_lang = (uint8_t)leonos_i18n_language();
         tty_context.disks = disks;
+        tty_context.setup = &setup;
         tty_context.disk_count = &disk_count;
         tty_context.selected_disk = &selected_disk;
         tty_context.install_mode = &install_mode;
@@ -3271,8 +4006,15 @@ int main(void)
     present_installer(window_id, &ui);
 
     for (;;) {
+        uint32_t event_count = 0;
         event.window_id = (uint32_t)window_id;
-        while (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
+        /* Wait only when idle. A fresh idle wait after every event prevents
+         * painting for as long as mouse motion keeps arriving. */
+        while (event_count < INSTALLER_EVENT_BATCH_MAX &&
+               (event_count == 0
+                    ? leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS)
+                    : leonos_gui_poll_app_event(&event)) > 0) {
+            ++event_count;
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 leonos_gui_destroy_app_window((uint32_t)window_id);
                 return 0;
@@ -3281,7 +4023,7 @@ int main(void)
                 update_surface_size(event.width, event.height);
                 leonos_ui_bind(&ui, pixels, surface_w, surface_h, INSTALLER_MAX_W);
                 dirty = 1;
-                continue;
+                break;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON &&
                 handle_mouse(window_id, &ui, &event)) {
@@ -3301,10 +4043,12 @@ int main(void)
                 leonos_gui_destroy_app_window((uint32_t)window_id);
                 return 0;
             }
+            if (dirty) {
+                break;
+            }
         }
         if (dirty) {
             present_installer(window_id, &ui);
         }
-        sleep_ms(10);
     }
 }

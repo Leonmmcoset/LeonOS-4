@@ -9,11 +9,12 @@ static uint64_t flags[3];
 static unsigned cow_copies;
 struct task *sched_current_task(void) { return &current; }
 static unsigned index_for(uint64_t address) { return (address - NTCLKS_USER_BASE) / 4096; }
-uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t address)
+bool address_space_user_page_readable(const struct address_space *as, uint64_t address)
 {
     (void)as;
     unsigned index = index_for(address);
-    return index < 3 && (flags[index] & NTCLKS_PAGE_PRESENT) ? 0x1000 : 0;
+    uint64_t required = NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER;
+    return index < 3 && (flags[index] & required) == required;
 }
 bool address_space_user_page_writable(const struct address_space *as, uint64_t address)
 {
@@ -52,6 +53,9 @@ int main(void)
     assert(user_range_ok(NTCLKS_USER_BASE + 8192, 4));
     assert(!user_range_writable(NTCLKS_USER_BASE + 8192, 4));
     assert(!user_range_writable(NTCLKS_USER_BASE + 12288, 4));
+    flags[2] = NTCLKS_PAGE_PROTNONE | NTCLKS_PAGE_USER;
+    assert(!user_range_ok(NTCLKS_USER_BASE + 8192, 4));
+    assert(!user_range_writable(NTCLKS_USER_BASE + 8192, 4));
     puts("GPU copy-out tests passed: readonly pages, COW, cross-page and overflow ranges");
     return 0;
 }

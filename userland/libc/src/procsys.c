@@ -7,6 +7,7 @@
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 #include <errno.h>
+#include <pwd.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/time.h>
@@ -98,12 +99,55 @@ int leonos_perf_info(struct leonos_perf_info *info)
         while (text[pos] && (text[pos] < '0' || text[pos] > '9')) ++pos;
         info->free_memory_kib = ps_parse_number(text, &pos);
     }
+    if (ps_read_file("/proc/stat", text, sizeof(text)) == 0) {
+        uint32_t line_pos = 0;
+        pos = 0;
+        while (text[line_pos] && text[line_pos] != ' ') ++line_pos;
+        if (text[line_pos] == ' ') {
+            ++line_pos;
+            info->busy_ticks = ps_parse_number(text, &line_pos);
+            (void)ps_parse_number(text, &line_pos);
+            (void)ps_parse_number(text, &line_pos);
+            info->idle_ticks = ps_parse_number(text, &line_pos);
+        }
+        while (text[pos]) {
+            uint32_t line_start = pos;
+            uint32_t cpu_index = 0;
+            uint32_t digits = 0;
+            while (text[pos] && text[pos] != '\n') ++pos;
+            if (text[line_start] == 'c' && text[line_start + 1u] == 'p' &&
+                text[line_start + 2u] == 'u' &&
+                text[line_start + 3u] >= '0' && text[line_start + 3u] <= '9') {
+                uint32_t cursor = line_start + 3u;
+                while (text[cursor] >= '0' && text[cursor] <= '9') {
+                    cpu_index = cpu_index * 10u + (uint32_t)(text[cursor] - '0');
+                    ++cursor;
+                    ++digits;
+                }
+                if (digits && cpu_index < LEONOS_PERF_MAX_CPUS && text[cursor] == ' ') {
+                    ++cursor;
+                    info->cpus[cpu_index].busy_ticks = ps_parse_number(text, &cursor);
+                    (void)ps_parse_number(text, &cursor);
+                    (void)ps_parse_number(text, &cursor);
+                    info->cpus[cpu_index].idle_ticks = ps_parse_number(text, &cursor);
+                    info->cpus[cpu_index].online = 1;
+                    if (cpu_index + 1u > info->cpu_count) info->cpu_count = cpu_index + 1u;
+                }
+            }
+            if (text[pos] == '\n') ++pos;
+        }
+    }
+    if (!info->cpu_count) {
+        info->cpu_count = 1;
+        info->cpus[0].busy_ticks = info->busy_ticks;
+        info->cpus[0].idle_ticks = info->idle_ticks;
+        info->cpus[0].online = 1;
+    }
+    info->online_cpu_count = info->cpu_count;
     info->task_count = ps_count_proc_tasks();
     info->running_tasks = 0;
     info->ready_tasks = 0;
     info->sleeping_tasks = 0;
-    info->cpu_count = 1;
-    info->online_cpu_count = 1;
     return 0;
 }
 
@@ -132,43 +176,44 @@ int leonos_time_ntp_sync(uint32_t timeout_ms, struct leonos_time_sync *result)
 int leonos_machine_identity(struct leonos_machine_identity *identity)
 {
     char id[40];
-    if (!identity) return -1;
+    if (!identity) { errno = EINVAL; return -1; }
     memset(identity, 0, sizeof(*identity));
     identity->version = 1;
-    ps_copy(identity->source, sizeof(identity->source), "/proc/machine-id");
-    if (ps_read_file("/proc/machine-id", id, sizeof(id)) == 0) {
-        ps_copy(identity->platform_uuid, sizeof(identity->platform_uuid), id);
-    }
+    ps_copy(identity->source, sizeof(identity->source), "sysfs-dmi");
+    if (ps_read_file("/sys/class/dmi/id/product_uuid", id, sizeof(id)) < 0) return -1;
+    id[strcspn(id, "\r\n")] = 0;
+    if (strlen(id) != 36) { errno = EIO; return -1; }
+    ps_copy(identity->platform_uuid, sizeof(identity->platform_uuid), id);
+    identity->flags |= LEONOS_MACHINE_IDENTITY_FLAG_PLATFORM_UUID;
     return 0;
 }
 
+/* Linux stat's comm may contain spaces and closing parentheses. The final
+ * closing parenthesis delimits it; token positions after state are fixed. */
 static int ps_parse_stat(const char *path, struct leonos_task_info *task)
 {
-    char text[512];
+    char text[1024];
     uint32_t pos = 0;
     if (ps_read_file(path, text, sizeof(text)) < 0) return -1;
+    const char *start = strchr(text, '('), *end = strrchr(text, ')');
+    if (!start || !end || end <= start || end[1] != ' ' || !end[2] || end[3] != ' ') return -1;
     memset(task, 0, sizeof(*task));
+    task->uid = UINT32_MAX; /* status may disappear during process exit */
     task->pid = (uint32_t)ps_parse_number(text, &pos);
-    while (text[pos] && text[pos] != '(') ++pos;
-    if (text[pos] == '(') ++pos;
-    {
-        uint32_t start = pos;
-        while (text[pos] && text[pos] != ')') ++pos;
-        uint32_t len = pos - start;
-        if (len >= sizeof(task->name)) len = sizeof(task->name) - 1u;
-        memcpy(task->name, text + start, len);
-        task->name[len] = 0;
+    size_t len = (size_t)(end - start - 1);
+    if (len >= sizeof(task->name)) len = sizeof(task->name) - 1;
+    memcpy(task->name, start + 1, len);
+    task->state = end[2] == 'Z' || end[2] == 'X' ? 3 :
+                  end[2] == 'T' || end[2] == 't' ? 4 : end[2] == 'R' ? 1 : 2;
+    pos = (uint32_t)(end + 4 - text);
+    for (unsigned field = 4; field <= 15; ++field) {
+        while (text[pos] == ' ') ++pos;
+        if (!text[pos] || text[pos] == '\n') return -1;
+        uint32_t number = pos;
+        if (field == 4) task->parent_pid = (uint32_t)ps_parse_number(text, &number);
+        if (field == 14 || field == 15) task->cpu_ticks += ps_parse_number(text, &number);
+        while (text[pos] && text[pos] != ' ' && text[pos] != '\n') ++pos;
     }
-    while (text[pos] && text[pos] != ')') ++pos;
-    if (text[pos] == ')') ++pos;
-    task->state = (uint32_t)ps_parse_number(text, &pos);
-    task->parent_pid = (uint32_t)ps_parse_number(text, &pos);
-    (void)ps_parse_number(text, &pos); /* pgrp */
-    (void)ps_parse_number(text, &pos); /* session */
-    task->cpu_ticks = ps_parse_number(text, &pos);
-    task->uid = (uint32_t)ps_parse_number(text, &pos);
-    task->role = (uint32_t)ps_parse_number(text, &pos);
-    task->flags = (uint32_t)ps_parse_number(text, &pos);
     task->kind = 1;
     return 0;
 }
@@ -194,7 +239,36 @@ int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity,
             pos += (uint32_t)strlen(entry.name);
             ps_copy(path + pos, sizeof(path) - pos, "/stat");
         }
-        if (ps_parse_stat(path, &tasks[count]) == 0) ++count;
+        if (ps_parse_stat(path, &tasks[count]) == 0) {
+            char status[512], password_buffer[1024];
+            struct passwd record, *account = NULL;
+            /* Identity and LeonOS-specific metadata are named status fields,
+             * never extra columns in the Linux stat ABI. */
+            char *suffix = strrchr(path, '/');
+            ps_copy(suffix + 1, (uint32_t)(sizeof(path) - (suffix + 1 - path)), "status");
+            if (ps_read_file(path, status, sizeof(status)) == 0) {
+                const char *value = strstr(status, "\nVmRSS:\t");
+                if (value) {
+                    uint32_t pos = 8;
+                    tasks[count].memory_kib = (uint32_t)ps_parse_number(value, &pos);
+                }
+                value = strstr(status, "\nUid:\t");
+                if (value) {
+                    uint32_t pos = 6;
+                    tasks[count].uid = (uint32_t)ps_parse_number(value, &pos);
+                }
+                const char *keys[] = {"\nLeonOSRole:\t", "\nLeonOSFlags:\t"};
+                uint32_t *fields[] = {&tasks[count].role, &tasks[count].flags};
+                for (unsigned i = 0; i < 2; ++i) {
+                    const char *value = strstr(status, keys[i]);
+                    if (value) { uint32_t pos = (uint32_t)strlen(keys[i]); *fields[i] = (uint32_t)ps_parse_number(value, &pos); }
+                }
+            }
+            if (tasks[count].uid != UINT32_MAX && getpwuid_r(tasks[count].uid, &record, password_buffer,
+                           sizeof(password_buffer), &account) == 0 && account && account->pw_name)
+                ps_copy(tasks[count].username, sizeof(tasks[count].username), account->pw_name);
+            ++count;
+        }
     }
     close(fd);
     return (int)count;

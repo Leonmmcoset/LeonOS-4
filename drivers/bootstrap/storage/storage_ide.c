@@ -67,6 +67,17 @@ static int ide_wait_ready(const struct ide_device_info *device, uint8_t want_drq
     return -110;
 }
 
+static int ide_flush_cache(const struct ide_device_info *device)
+{
+    if (!device || !device->present || device->atapi) return -95;
+    int ret = ide_select(device);
+    if (!ret) ret = ide_wait_ready(device, 0);
+    if (ret < 0) return ret;
+    x86_64_outb(0xe7, (uint16_t)(device->command_base + 7u));
+    ide_io_delay(device->control_base);
+    return ide_wait_ready(device, 0);
+}
+
 static int ide_soft_reset(const struct ide_device_info *device)
 {
     uint8_t status;
@@ -348,4 +359,3 @@ static uint32_t fat_offset_for_cluster(uint32_t cluster)
 {
     return (cluster * 4u) % g_storage.bytes_per_sector;
 }
-

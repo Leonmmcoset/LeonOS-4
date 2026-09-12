@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include "desktop.h"
 #include <leonos/launch_result.h>
 
@@ -11,6 +12,31 @@ static uint32_t desktop_text_len(const char *text)
         ++len;
     }
     return len;
+}
+
+static char desktop_ascii_tolower(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z') {
+        return (char)(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
+static int desktop_text_ends_with_ignore_case_len(const char *text,
+                                                  uint32_t text_len,
+                                                  const char *suffix)
+{
+    uint32_t suffix_len = desktop_text_len(suffix);
+    if (!text || !suffix || suffix_len > text_len) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < suffix_len; ++i) {
+        if (desktop_ascii_tolower(text[text_len - suffix_len + i]) !=
+            desktop_ascii_tolower(suffix[i])) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static int desktop_utf8_cont(uint8_t byte)
@@ -342,6 +368,10 @@ static void desktop_copy_item_label(char *dst, uint32_t dst_len,
     len = desktop_text_len(entry->name);
     if (entry->type == LEONOS_FS_TYPE_FILE &&
         text_ends_with(entry->name, ".lnk") && len > 4U) {
+        len -= 4U;
+    }
+    if (entry->type == LEONOS_FS_TYPE_FILE &&
+        desktop_text_ends_with_ignore_case_len(entry->name, len, ".elf")) {
         len -= 4U;
     }
     if (len >= dst_len) {
@@ -730,11 +760,11 @@ int desktop_refresh_items(void)
 
     desktop_items_clear();
     user = (struct leonos_user_info){0};
-    auth_ret = leonos_auth_current(&user);
+    auth_ret = leonos_session_current(&user);
     if (auth_ret < 0) {
         return auth_ret;
     }
-    if (!user.uid || !user.home[0]) {
+    if (!user.home[0]) {
         return -LEONOS_EACCES;
     }
     desktop_build_child_path(desktop_folder_path, sizeof(desktop_folder_path),

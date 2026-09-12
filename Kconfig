@@ -29,9 +29,9 @@ config INSTALLER_INSTALLED_REQUIRE_LICENSE
     default y
 
 config IMAGE_SIZE_MIB
-    int "Standalone VMDK image size in MiB (FAT32 ESP plus exFAT root)"
+    int "Standalone VMDK image size in MiB (FAT32 ESP plus ext2 root)"
     range 384 4096
-    default 512
+    default 1024
 
 config INSTALLER_ROOT_SIZE_MIB
     int "Installer runtime root size in MiB"
@@ -176,7 +176,7 @@ menu "QEMU Run"
 config QEMU_MEMORY_MB
     int "QEMU memory size in MiB"
     range 128 65536
-    default 1024
+    default 4096
 
 config QEMU_SMP_CPUS
     int "QEMU virtual CPU count"

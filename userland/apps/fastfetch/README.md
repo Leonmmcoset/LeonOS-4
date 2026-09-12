@@ -1,9 +1,8 @@
 # Fastfetch application
 
-The Fastfetch program is built from the upstream Fastfetch source pinned at
-`third_party/fastfetch` together with the LeonOS platform adapter in
-`userland/fastfetch`. The installed executable is
-`/programs/fastfetch/fastfetch.elf`.
+The Fastfetch program is the supplied static musl Linux binary, packaged
+unchanged by `tools/package_fastfetch.py`. The installed executable is
+`/usr/lib/leonos/apps/fastfetch/fastfetch.elf`.
 
-See `userland/fastfetch/README.md` for the supported LeonOS modules and
-porting limitations.
+See `userland/fastfetch/README.md` for the input, hash, default LeonOS logo,
+and Linux interface validation.

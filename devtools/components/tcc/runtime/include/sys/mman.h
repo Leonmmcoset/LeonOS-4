@@ -1,149 +1,156 @@
-/*
-Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
-SPDX-License-Identifier: BSD-3-Clause-Clear
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted (subject to the limitations in the
-disclaimer below) provided that the following conditions are met:
-
-  * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-
-  * Redistributions in binary form must reproduce the above
-    copyright notice, this list of conditions and the following
-    disclaimer in the documentation and/or other materials provided
-    with the distribution.
-
-  * Neither the name of Qualcomm Technologies, Inc. nor the names of its
-    contributors may be used to endorse or promote products derived
-    from this software without specific prior written permission.
-
-NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE
-GRANTED BY THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT
-HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
-WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
-GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
-IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
-
-#ifndef _SYS_MMAN_H_
-#define _SYS_MMAN_H_
-
-#include <sys/cdefs.h>
-#include <sys/_types.h>
-
-_BEGIN_STD_C
-
-#ifndef _SIZE_T_DECLARED
-typedef __size_t size_t;
-#define _SIZE_T_DECLARED
+#ifndef	_SYS_MMAN_H
+#define	_SYS_MMAN_H
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#ifndef _OFF_T_DECLARED
-typedef __off_t off_t;
-#define _OFF_T_DECLARED
+#include <features.h>
+
+#define __NEED_mode_t
+#define __NEED_size_t
+#define __NEED_off_t
+
+#if defined(_GNU_SOURCE)
+#define __NEED_ssize_t
 #endif
 
-/*
- * Protection flags (prot argument to mmap / mprotect).
- */
-#define PROT_NONE  0x0 /* no access */
-#define PROT_READ  0x1 /* pages can be read */
-#define PROT_WRITE 0x2 /* pages can be written */
-#define PROT_EXEC  0x4 /* pages can be executed */
+#include <bits/alltypes.h>
 
-/*
- * Mapping flags (flags argument to mmap).
- */
-#define MAP_SHARED    0x001 /* share changes */
-#define MAP_PRIVATE   0x002 /* changes are private */
-#define MAP_FIXED     0x010 /* interpret addr exactly */
-#define MAP_ANONYMOUS 0x020 /* not backed by any file */
-#if __GNU_VISIBLE
-#define MAP_ANON MAP_ANONYMOUS
+#define MAP_FAILED ((void *) -1)
+
+#define MAP_SHARED     0x01
+#define MAP_PRIVATE    0x02
+#define MAP_SHARED_VALIDATE 0x03
+#define MAP_TYPE       0x0f
+#define MAP_FIXED      0x10
+#define MAP_ANON       0x20
+#define MAP_ANONYMOUS  MAP_ANON
+#define MAP_NORESERVE  0x4000
+#define MAP_GROWSDOWN  0x0100
+#define MAP_DENYWRITE  0x0800
+#define MAP_EXECUTABLE 0x1000
+#define MAP_LOCKED     0x2000
+#define MAP_POPULATE   0x8000
+#define MAP_NONBLOCK   0x10000
+#define MAP_STACK      0x20000
+#define MAP_HUGETLB    0x40000
+#define MAP_SYNC       0x80000
+#define MAP_FIXED_NOREPLACE 0x100000
+#define MAP_FILE       0
+
+#define MAP_HUGE_SHIFT 26
+#define MAP_HUGE_MASK  0x3f
+#define MAP_HUGE_16KB  (14 << 26)
+#define MAP_HUGE_64KB  (16 << 26)
+#define MAP_HUGE_512KB (19 << 26)
+#define MAP_HUGE_1MB   (20 << 26)
+#define MAP_HUGE_2MB   (21 << 26)
+#define MAP_HUGE_8MB   (23 << 26)
+#define MAP_HUGE_16MB  (24 << 26)
+#define MAP_HUGE_32MB  (25 << 26)
+#define MAP_HUGE_256MB (28 << 26)
+#define MAP_HUGE_512MB (29 << 26)
+#define MAP_HUGE_1GB   (30 << 26)
+#define MAP_HUGE_2GB   (31 << 26)
+#define MAP_HUGE_16GB  (34U << 26)
+
+#define PROT_NONE      0
+#define PROT_READ      1
+#define PROT_WRITE     2
+#define PROT_EXEC      4
+#define PROT_GROWSDOWN 0x01000000
+#define PROT_GROWSUP   0x02000000
+
+#define MS_ASYNC       1
+#define MS_INVALIDATE  2
+#define MS_SYNC        4
+
+#define MCL_CURRENT    1
+#define MCL_FUTURE     2
+#define MCL_ONFAULT    4
+
+#define POSIX_MADV_NORMAL     0
+#define POSIX_MADV_RANDOM     1
+#define POSIX_MADV_SEQUENTIAL 2
+#define POSIX_MADV_WILLNEED   3
+#define POSIX_MADV_DONTNEED   4
+
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define MADV_NORMAL      0
+#define MADV_RANDOM      1
+#define MADV_SEQUENTIAL  2
+#define MADV_WILLNEED    3
+#define MADV_DONTNEED    4
+#define MADV_FREE        8
+#define MADV_REMOVE      9
+#define MADV_DONTFORK    10
+#define MADV_DOFORK      11
+#define MADV_MERGEABLE   12
+#define MADV_UNMERGEABLE 13
+#define MADV_HUGEPAGE    14
+#define MADV_NOHUGEPAGE  15
+#define MADV_DONTDUMP    16
+#define MADV_DODUMP      17
+#define MADV_WIPEONFORK  18
+#define MADV_KEEPONFORK  19
+#define MADV_COLD        20
+#define MADV_PAGEOUT     21
+#define MADV_POPULATE_READ 22
+#define MADV_POPULATE_WRITE 23
+#define MADV_DONTNEED_LOCKED 24
+#define MADV_COLLAPSE    25
+#define MADV_HWPOISON    100
+#define MADV_SOFT_OFFLINE 101
 #endif
 
-/*
- * Error return value from mmap().
- */
-#define MAP_FAILED ((void *)-1)
+#ifdef _GNU_SOURCE
+#define MREMAP_MAYMOVE 1
+#define MREMAP_FIXED 2
+#define MREMAP_DONTUNMAP 4
 
-/*
- * Flags for msync().
- */
-#define MS_ASYNC      1 /* perform asynchronous writes */
-#define MS_SYNC       4 /* perform synchronous writes */
-#define MS_INVALIDATE 2 /* invalidate cached data */
+#define MLOCK_ONFAULT 0x01
 
-/*
- * Advice values for posix_madvise() (POSIX names).
- */
-#define POSIX_MADV_NORMAL     0 /* no special treatment */
-#define POSIX_MADV_RANDOM     1 /* expect random page references */
-#define POSIX_MADV_SEQUENTIAL 2 /* expect sequential page references */
-#define POSIX_MADV_WILLNEED   3 /* will need these pages */
-#define POSIX_MADV_DONTNEED   4 /* will not need these pages */
-
-/*
- * GNU madvise() advice values (superset of POSIX_MADV_*).
- */
-#if __GNU_VISIBLE
-#define MADV_NORMAL         POSIX_MADV_NORMAL     /* no special treatment */
-#define MADV_RANDOM         POSIX_MADV_RANDOM     /* expect random page references */
-#define MADV_SEQUENTIAL     POSIX_MADV_SEQUENTIAL /* expect sequential page references */
-#define MADV_WILLNEED       POSIX_MADV_WILLNEED   /* will need these pages */
-#define MADV_DONTNEED       POSIX_MADV_DONTNEED   /* will not need these pages */
-#define MADV_FREE           8                     /* free pages, but keep mapping */
-#define MADV_REMOVE         9                     /* remove these pages & resources */
-#define MADV_DONTFORK       10                    /* don't inherit across fork */
-#define MADV_DOFORK         11                    /* do inherit across fork */
-#define MADV_MERGEABLE      12                    /* KSM may merge identical pages */
-#define MADV_UNMERGEABLE    13                    /* KSM may not merge identical pages */
-#define MADV_HUGEPAGE       14                    /* worth backing with hugepages */
-#define MADV_NOHUGEPAGE     15                    /* not worth backing with hugepages */
-#define MADV_DONTDUMP       16                    /* exclude from core dump */
-#define MADV_DODUMP         17                    /* clear MADV_DONTDUMP flag */
-#define MADV_WIPEONFORK     18                    /* zero memory on fork (child only) */
-#define MADV_KEEPONFORK     19                    /* undo MADV_WIPEONFORK */
-#define MADV_COLD           20                    /* deactivate these pages */
-#define MADV_PAGEOUT        21                    /* reclaim these pages */
-#define MADV_POPULATE_READ  22                    /* prefault page tables readable */
-#define MADV_POPULATE_WRITE 23                    /* prefault page tables writable */
+#define MFD_CLOEXEC 0x0001U
+#define MFD_ALLOW_SEALING 0x0002U
+#define MFD_HUGETLB 0x0004U
 #endif
 
-/*
- * Flags for mlockall().
- */
-#define MCL_CURRENT 1 /* lock all currently mapped pages */
-#define MCL_FUTURE  2 /* lock all pages mapped in the future */
-#if __GNU_VISIBLE
-#define MCL_ONFAULT   4    /* lock pages when they are faulted in */
-#define MLOCK_ONFAULT 0x01 /* lock pages when they are faulted in (mlock2) */
+#include <bits/mman.h>
+
+void *mmap (void *, size_t, int, int, int, off_t);
+int munmap (void *, size_t);
+
+int mprotect (void *, size_t, int);
+int msync (void *, size_t, int);
+
+int posix_madvise (void *, size_t, int);
+
+int mlock (const void *, size_t);
+int munlock (const void *, size_t);
+int mlockall (int);
+int munlockall (void);
+
+#ifdef _GNU_SOURCE
+void *mremap (void *, size_t, size_t, int, ...);
+int remap_file_pages (void *, size_t, int, size_t, int);
+int memfd_create (const char *, unsigned);
+int mlock2 (const void *, size_t, unsigned);
 #endif
 
-/*
- * Function declarations.
- */
-void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
-int   munmap(void *addr, size_t len);
-int   mprotect(void *addr, size_t len, int prot);
-int   msync(void *addr, size_t len, int flags);
-int   mlock(const void *addr, size_t len);
-int   munlock(const void *addr, size_t len);
-int   mlockall(int flags);
-int   munlockall(void);
-int   posix_madvise(void *addr, size_t len, int advice);
-#if __GNU_VISIBLE
-int madvise(void *addr, size_t len, int advice);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+int madvise (void *, size_t, int);
+int mincore (void *, size_t, unsigned char *);
 #endif
 
-_END_STD_C
+int shm_open (const char *, int, mode_t);
+int shm_unlink (const char *);
 
-#endif /* _SYS_MMAN_H_ */
+#if defined(_LARGEFILE64_SOURCE)
+#define mmap64 mmap
+#define off64_t off_t
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+#endif

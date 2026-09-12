@@ -4,7 +4,7 @@ extern "C" {
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/ui.h>
-#include <leonos/posix.h>
+#include <sys/stat.h>
 #include <sys/stat.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -358,7 +358,7 @@ void clear_text_font() {}
 bool file_exists_platform(const char *path)
 {
     struct stat info{};
-    return path != nullptr && leonos_posix_stat(path, &info) == 0;
+    return path != nullptr && stat(path, &info) == 0;
 }
 
 bool file_remove_platform(const char *path)
@@ -372,7 +372,7 @@ bool file_read_bytes_platform(const char *path, File::byte *&out_data, int &out_
     out_size = 0;
     if (path == nullptr || path[0] == '\0') return false;
     struct stat info{};
-    if (leonos_posix_stat(path, &info) != 0 || info.st_size > 0x7FFFFFFFULL) return false;
+    if (stat(path, &info) != 0 || info.st_size > 0x7FFFFFFFULL) return false;
     const int fd = open(path, LEONOS_O_RDONLY, 0);
     if (fd < 0) return false;
     if (info.st_size == 0) { close(fd); return true; }

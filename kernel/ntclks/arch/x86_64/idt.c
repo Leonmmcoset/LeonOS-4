@@ -85,6 +85,7 @@ extern void irq13_stub(void);
 extern void irq14_stub(void);
 extern void irq15_stub(void);
 extern void irq32_stub(void);
+extern void irq_membarrier_stub(void);
 extern void irqff_stub(void);
 extern uint64_t x86_64_read_cr2(void);
 
@@ -192,6 +193,7 @@ void idt_init(void)
      * A valid gate is required even though the handler only acknowledges and
      * discards the interrupt; otherwise the CPU raises #GP with an IDT error
      * code of (0xff << 3) | 2. */
+    idt_set(0x41, irq_membarrier_stub, 0);
     idt_set(0xff, irqff_stub, 0);
     /* Syscalls may select a different address space before returning. Use an
      * interrupt gate so a local timer cannot nest inside that decision and
@@ -406,12 +408,11 @@ static void format_user_page_fault_report(char *buf, uint32_t cap,
 }
 
 /**
- * Abort user page fault task.
+ * Queue a synchronous Linux fault while the task and address space are pinned.
  * @param frame Value supplied by the caller.
  * @param cr2 Value supplied by the caller.
- * @return The value or status produced by the operation.
  */
-static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_t cr2)
+static void signal_user_page_fault(struct trap_frame *frame, uint64_t cr2)
 {
     struct task *task = sched_current_task();
     char report[LEONOS_FS_PATH_LEN];
@@ -419,16 +420,13 @@ static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_
         bugcheck_trap("Unhandled Page Fault", frame, cr2);
     }
     format_user_page_fault_report(report, sizeof(report), task, frame, cr2);
-    console_printf("[ntclks] user page fault killed pid=%u name=%s cr2=0x%llx rip=0x%llx error=0x%llx\n",
+    console_printf("[ntclks] user page fault SIGSEGV pid=%u name=%s cr2=0x%llx rip=0x%llx error=0x%llx\n",
                    task->pid,
                    task->name,
                    (unsigned long long)cr2,
                    (unsigned long long)frame->rip,
                    (unsigned long long)frame->error);
-    syscall_release_task_files(task);
-    pty_process_exit(task->pid);
-    sched_exit(task->pid, 0x8000000eULL);
-    return userland_schedule_from_frame(NULL);
+    kernel_signal_force_fault(task, 11, syscall_page_fault_signal_code(task, cr2), cr2);
 }
 
 /**
@@ -483,8 +481,9 @@ struct task *page_fault_dispatch(struct trap_frame *frame)
                    (unsigned)((frame->error >> 4) & 1u));
     if ((frame->cs & 3ULL) == 3ULL) {
         kernel_spin_unlock(&user_page_fault_lock);
+        signal_user_page_fault(frame, cr2);
         kernel_execution_unlock_irqrestore(execution_flags);
-        return abort_user_page_fault_task(frame, cr2);
+        return userland_schedule_from_frame(frame);
     }
     kernel_spin_unlock(&user_page_fault_lock);
     kernel_execution_unlock_irqrestore(execution_flags);

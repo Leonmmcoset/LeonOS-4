@@ -23,7 +23,8 @@ static int test_signal(void)
 {
     struct sigaction action;
     struct sigaction previous;
-    __sigset_t mask;
+    sigset_t mask;
+    sigset_t empty;
     unsigned expected;
 
     signal_hits = 0;
@@ -34,8 +35,8 @@ static int test_signal(void)
         printf("[abittest] signal FAIL sigaction errno=%d\n", errno);
         return -1;
     }
-    __sigemptyset(&mask);
-    __sigaddset(&mask, SIGUSR1);
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
     if (sigprocmask(SIG_BLOCK, &mask, 0) < 0) {
         printf("[abittest] signal FAIL block errno=%d\n", errno);
         return -1;
@@ -51,7 +52,11 @@ static int test_signal(void)
         printf("[abittest] signal FAIL handler ran while blocked\n");
         return -1;
     }
-    __sigemptyset(&mask);
+    sigemptyset(&empty);
+    if (sigprocmask(SIG_UNBLOCK, &empty, 0) < 0 || signal_hits != 0) {
+        printf("[abittest] signal FAIL empty unblock changed pending delivery\n");
+        return -1;
+    }
     if (sigprocmask(SIG_UNBLOCK, &mask, 0) < 0) {
         printf("[abittest] signal FAIL unblock errno=%d\n", errno);
         return -1;

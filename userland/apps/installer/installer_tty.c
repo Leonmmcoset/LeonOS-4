@@ -3,12 +3,16 @@
 #include <leonos/system.h>
 
 #include <stdlib.h>
+#include <errno.h>
+#include <termios.h>
+#include <string.h>
 
 #include "installer_tty.h"
 
 static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity)
 {
     uint32_t length = 0;
+    int overflow = 0;
     char input;
     if (!buffer || capacity < 2U) {
         return 0;
@@ -17,20 +21,66 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity)
     if (prompt) {
         write(1, prompt, strlen(prompt));
     }
-    while (read(0, &input, 1) > 0) {
+    for (;;) {
+        ssize_t result = read(0, &input, 1);
+        if (result < 0 && errno == EINTR) continue;
+        if (result <= 0) break;
         if (input == '\r') {
             continue;
         }
         if (input == '\n') {
             buffer[length] = 0;
+            if (overflow) { errno = EOVERFLOW; return 0; }
             return 1;
         }
         if ((uint8_t)input >= 32U && length + 1U < capacity) {
             buffer[length++] = input;
             buffer[length] = 0;
-        }
+        } else if ((uint8_t)input >= 32U) overflow = 1;
     }
     return 0;
+}
+
+static int tty_secret(const char *prompt, char *buffer, uint32_t capacity)
+{
+    struct termios saved, secret;
+    if (tcgetattr(0, &saved) < 0) return 0;
+    secret = saved;
+    secret.c_lflag &= ~(ECHO | ECHONL);
+    if (tcsetattr(0, TCSANOW, &secret) < 0) return 0;
+    int result = tty_read_line(prompt, buffer, capacity);
+    if (tcsetattr(0, TCSANOW, &saved) < 0) result = 0;
+    puts("");
+    return result;
+}
+
+static int tty_setup(struct installer_setup *setup)
+{
+    char answer[16], prompt[80];
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!setup->component_available[i]) continue;
+        snprintf(prompt, sizeof(prompt), "Install %s? [Y/n]: ", installer_component_names[i]);
+        for (;;) {
+            if (!tty_read_line(prompt, answer, sizeof(answer))) return 0;
+            if (!answer[0] || !strcmp(answer, "y") || !strcmp(answer, "Y")) {
+                setup->component_selected[i] = 1;
+                break;
+            }
+            if (!strcmp(answer, "n") || !strcmp(answer, "N")) {
+                setup->component_selected[i] = 0;
+                break;
+            }
+        }
+    }
+    for (;;) {
+        if (!tty_read_line("Username: ", setup->username, sizeof(setup->username)) ||
+            !tty_secret("Password: ", setup->password, sizeof(setup->password)) ||
+            !tty_secret("Confirm password: ", setup->password_confirm, sizeof(setup->password_confirm)) ||
+            !tty_secret("root password: ", setup->root_password, sizeof(setup->root_password)) ||
+            !tty_secret("Confirm root password: ", setup->root_password_confirm, sizeof(setup->root_password_confirm))) return 0;
+        if (installer_setup_valid(setup)) return 1;
+        puts("Check username and matching passwords (1-32 characters, no spaces).");
+    }
 }
 
 static int tty_line_is(const char *line, const char *expected)
@@ -100,7 +150,7 @@ static int tty_choose_disk(const struct installer_tty_context *context)
 int installer_tty_main(const struct installer_tty_context *context)
 {
     char input[32];
-    if (!context || !context->disks || !context->disk_count ||
+    if (!context || !context->setup || !context->disks || !context->disk_count ||
         !context->selected_disk || !context->install_mode ||
         !context->install_success || !context->page ||
         !context->refresh_disks || !context->format_disk_line ||
@@ -139,6 +189,7 @@ int installer_tty_main(const struct installer_tty_context *context)
             return 1;
         }
         context->print_update_packages();
+        installer_setup_existing(context->setup, "/target");
         if (!tty_read_line("Type UPDATE to confirm an in-place update: ",
                            input, sizeof(input)) || !tty_line_is(input, "UPDATE")) {
             puts("Update not confirmed. Installation cancelled.");
@@ -146,6 +197,10 @@ int installer_tty_main(const struct installer_tty_context *context)
         }
         context->perform_update();
     } else {
+        if (!tty_setup(context->setup)) {
+            puts("Account setup cancelled or input exceeds the transport buffer.");
+            return 1;
+        }
         if (!tty_read_line("Type INSTALL to confirm erasing this disk: ",
                            input, sizeof(input)) || !tty_line_is(input, "INSTALL")) {
             puts("Installation not confirmed. Installation cancelled.");
@@ -159,7 +214,7 @@ int installer_tty_main(const struct installer_tty_context *context)
     }
     if (tty_read_line("Reboot now? [Y/n]: ", input, sizeof(input)) &&
         input[0] != 'n' && input[0] != 'N') {
-        leonos_system_reboot();
+        if (leonos_system_reboot() < 0) perror("Restart failed");
     }
 
     puts("Installation finished.");
@@ -168,9 +223,9 @@ int installer_tty_main(const struct installer_tty_context *context)
             return 0;
         }
         if (tty_line_is(input, "reboot") || tty_line_is(input, "r")) {
-            leonos_system_reboot();
+            if (leonos_system_reboot() < 0) perror("Restart failed");
         } else if (tty_line_is(input, "shutdown") || tty_line_is(input, "poweroff")) {
-            leonos_system_shutdown();
+            if (leonos_system_shutdown() < 0) perror("Shutdown failed");
         } else if (tty_line_is(input, "exit") || tty_line_is(input, "q")) {
             return 0;
         } else {

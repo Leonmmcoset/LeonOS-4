@@ -2,6 +2,7 @@
 #include <leonos/environment.h>
 #include <leonos/driver.h>
 #include <leonos/auth.h>
+#include <leonos/auth.h>
 #include <leonos/audio.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
@@ -28,1344 +29,47 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <termios.h>
+#include <time.h>
 #include <pty.h>
 #include <linux/tty.h>
 #include <unistd.h>
+#include <leonos/layout.h>
 
-/* TinyCC's static archive scan can leave Picolibc's environ member out when
- * the generated program only needs the CRT startup object. Keep a real
- * address available for the startup assignment; Picolibc's strong definition
- * still wins when its full environment implementation is pulled in. */
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((weak))
-#endif
-char **environ;
 
-#ifndef LEONOS_USE_PICOLIBC
-int errno;
 
-struct leonos_file {
-    int fd;
-    long position;
-    long length;
-    int eof;
-    int writable;
-};
-
-static struct leonos_file std_streams[3] = {
-    {.fd = 0}, {.fd = 1, .writable = 1}, {.fd = 2, .writable = 1},
-};
-FILE *stdin = &std_streams[0];
-FILE *stdout = &std_streams[1];
-FILE *stderr = &std_streams[2];
-
-#define HEAP_BLOCK_MAGIC 0x4c48454150424c4bULL
-#define MALLOC_ALIGN 16UL
-#define HEAP_PAGE_SIZE 4096UL
-#define HEAP_ARENA_SIZE (64UL * 1024UL)
-#define HEAP_BLOCK_FREE 0x00000001u
-#define HEAP_MIN_SPLIT 16UL
-
-struct heap_block {
-    uint64_t magic;
-    size_t size;
-    uint32_t flags;
-    uint32_t reserved;
-    struct heap_block *prev;
-    struct heap_block *next;
-    uint64_t reserved2;
-};
-
-static struct heap_block *heap_blocks;
-
-size_t strlen(const char *s)
-{
-    size_t n = 0;
-    while (s && s[n]) {
-        ++n;
-    }
-    return n;
-}
-
-void *memcpy(void *dst, const void *src, size_t len)
-{
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s = (const unsigned char *)src;
-    for (size_t i = 0; i < len; ++i) {
-        d[i] = s[i];
-    }
-    return dst;
-}
-
-void *memset(void *dst, int value, size_t len)
-{
-    unsigned char *d = (unsigned char *)dst;
-    for (size_t i = 0; i < len; ++i) {
-        d[i] = (unsigned char)value;
-    }
-    return dst;
-}
-
-void *memmove(void *dst, const void *src, size_t len)
-{
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s = (const unsigned char *)src;
-    if (d < s) {
-        for (size_t i = 0; i < len; ++i) {
-            d[i] = s[i];
-        }
-    } else if (d > s) {
-        while (len) {
-            --len;
-            d[len] = s[len];
-        }
-    }
-    return dst;
-}
-
-int memcmp(const void *left, const void *right, size_t len)
-{
-    const unsigned char *a = (const unsigned char *)left;
-    const unsigned char *b = (const unsigned char *)right;
-    for (size_t i = 0; i < len; ++i) {
-        if (a[i] != b[i]) {
-            return a[i] < b[i] ? -1 : 1;
-        }
-    }
-    return 0;
-}
-
-int strcmp(const char *left, const char *right)
-{
-    while (*left && *left == *right) {
-        ++left;
-        ++right;
-    }
-    return (unsigned char)*left - (unsigned char)*right;
-}
-
-int strcasecmp(const char *left, const char *right)
-{
-    while (*left && *right) {
-        char a = *left >= 'A' && *left <= 'Z' ? *left + 32 : *left;
-        char b = *right >= 'A' && *right <= 'Z' ? *right + 32 : *right;
-        if (a != b) {
-            return (unsigned char)a - (unsigned char)b;
-        }
-        ++left;
-        ++right;
-    }
-    return (unsigned char)*left - (unsigned char)*right;
-}
-
-int strncasecmp(const char *left, const char *right, size_t len)
-{
-    while (len && *left && *right) {
-        char a = *left >= 'A' && *left <= 'Z' ? *left + 32 : *left;
-        char b = *right >= 'A' && *right <= 'Z' ? *right + 32 : *right;
-        if (a != b) {
-            return (unsigned char)a - (unsigned char)b;
-        }
-        ++left;
-        ++right;
-        --len;
-    }
-    return len ? (unsigned char)*left - (unsigned char)*right : 0;
-}
-
-int abs(int value)
-{
-    return value < 0 ? -value : value;
-}
-
-int atoi(const char *text)
-{
-    int sign = 1;
-    int value = 0;
-    while (text && (*text == ' ' || *text == '\t')) {
-        ++text;
-    }
-    if (text && *text == '-') {
-        sign = -1;
-        ++text;
-    }
-    while (text && *text >= '0' && *text <= '9') {
-        value = value * 10 + (*text++ - '0');
-    }
-    return value * sign;
-}
-
-double atof(const char *text)
-{
-    (void)text;
-    return 0.0;
-}
-
-char *strdup(const char *text)
-{
-    size_t len = strlen(text) + 1;
-    char *copy = malloc(len);
-    return copy ? (char *)memcpy(copy, text, len) : 0;
-}
-
-char *getenv(const char *name)
-{
-    (void)name;
-    return 0;
-}
-
-int strncmp(const char *left, const char *right, size_t len)
-{
-    while (len && *left && *left == *right) {
-        ++left;
-        ++right;
-        --len;
-    }
-    return len ? (unsigned char)*left - (unsigned char)*right : 0;
-}
-
-char *strcpy(char *dst, const char *src)
-{
-    char *result = dst;
-    while ((*dst++ = *src++) != 0) {
-    }
-    return result;
-}
-
-char *strncpy(char *dst, const char *src, size_t len)
-{
-    char *result = dst;
-    while (len && *src) {
-        *dst++ = *src++;
-        --len;
-    }
-    while (len) {
-        *dst++ = 0;
-        --len;
-    }
-    return result;
-}
-
-char *strchr(const char *text, int value)
-{
-    char target = (char)value;
-    while (*text) {
-        if (*text == target) {
-            return (char *)text;
-        }
-        ++text;
-    }
-    return target == 0 ? (char *)text : 0;
-}
-
-char *strstr(const char *text, const char *needle)
-{
-    size_t needle_len = strlen(needle);
-    if (needle_len == 0) {
-        return (char *)text;
-    }
-    while (*text) {
-        if (strncmp(text, needle, needle_len) == 0) {
-            return (char *)text;
-        }
-        ++text;
-    }
-    return 0;
-}
-
-char *strrchr(const char *text, int value)
-{
-    const char *last = 0;
-    char target = (char)value;
-    while (text && *text) {
-        if (*text == target) {
-            last = text;
-        }
-        ++text;
-    }
-    return target == 0 ? (char *)text : (char *)last;
-}
-#endif
-
-long read(int fd, void *buf, size_t len)
-{
-    struct leonos_stat stat_info;
-    struct termios termios;
-    size_t done = 0;
-    int pty_input = 0;
-    int nonblock = 0;
-
-    /* The kernel reports an empty PTY queue as a zero-length read.  That is
-     * not EOF for a terminal: wait for input so both canonical and raw-mode
-     * POSIX programs see the expected blocking read semantics. */
-    if (len != 0) {
-        if (tcgetattr(fd, &termios) == 0) {
-            pty_input = 1;
-        }
-        {
-            int flags = fcntl(fd, F_GETFL);
-            nonblock = flags >= 0 && (flags & O_NONBLOCK) != 0;
-        }
-    }
-
-    /* The kernel already bounds each file read to this size.  Avoid an
-     * additional fstat/path lookup for the small reads used during startup. */
-    if (len <= LEONOS_FS_READ_SLICE_BYTES) {
-        long result;
-        do {
-            result = syscall3(SYS_read, fd, (long)buf, (long)len);
-            if (result == -LEONOS_EAGAIN) {
-                if (nonblock) {
-                    return result;
-                }
-                sleep_ms(1);
-                continue;
-            }
-            if (result != 0 || !pty_input || nonblock) {
-                return result;
-            }
-            sleep_ms(4);
-        } while (tcgetattr(fd, &termios) == 0);
-        return 0;
-    }
-    if (leonos_fstat_legacy(fd, &stat_info) < 0 || stat_info.type != LEONOS_FS_TYPE_FILE) {
-        /* Pipes, terminals, and device-like descriptors do not expose a
-         * regular-file size. Keep the direct path, but preserve the same
-         * transparent EAGAIN retry guarantee as regular files. */
-        for (;;) {
-            long result = syscall3(SYS_read, fd, (long)buf, (long)len);
-            if (result != -LEONOS_EAGAIN) {
-                return result;
-            }
-            if (nonblock) {
-                return result;
-            }
-            sleep_ms(1);
-        }
-    }
-    while (done < len) {
-        size_t chunk = len - done;
-        long ret;
-        if (chunk > LEONOS_FS_READ_SLICE_BYTES) {
-            chunk = LEONOS_FS_READ_SLICE_BYTES;
-        }
-        ret = syscall3(SYS_read, fd, (long)((uint8_t *)buf + done), (long)chunk);
-        if (ret == -LEONOS_EAGAIN) {
-            sleep_ms(1);
-            continue;
-        }
-        if (ret <= 0) {
-            return done ? (long)done : ret;
-        }
-        done += (size_t)ret;
-        if ((size_t)ret < chunk) {
-            break;
-        }
-    }
-    return (long)done;
-}
-
-long write(int fd, const void *buf, size_t len)
-{
-    size_t done = 0;
-    while (done < len) {
-        size_t chunk = len - done;
-        long ret;
-        if (chunk > LEONOS_FS_FILE_WRITE_SLICE_BYTES) {
-            chunk = LEONOS_FS_FILE_WRITE_SLICE_BYTES;
-        }
-        ret = syscall3(SYS_write, fd, (long)((const uint8_t *)buf + done), (long)chunk);
-        if (ret == -LEONOS_EAGAIN) {
-            sleep_ms(1);
-            continue;
-        }
-        if (ret <= 0) {
-            return done ? (long)done : ret;
-        }
-        done += (size_t)ret;
-        if ((size_t)ret < chunk) {
-            break;
-        }
-    }
-    return (long)done;
-}
-
-int open(const char *path, int flags, ...)
-{
-    va_list args;
-    int mode = 0;
-
-    if (flags & LEONOS_O_CREAT) {
-        va_start(args, flags);
-        mode = va_arg(args, int);
-        va_end(args);
-    }
-    return (int)syscall3(SYS_open, (long)path, flags, mode);
-}
-
-int openat(int dirfd, const char *path, int flags, ...)
-{
-    va_list args;
-    int mode = 0;
-    long result;
-
-    if (flags & LEONOS_O_CREAT) {
-        va_start(args, flags);
-        mode = va_arg(args, int);
-        va_end(args);
-    }
-    result = syscall6(SYS_openat, dirfd, (long)path, flags, mode, 0, 0);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return (int)result;
-}
-
-int close(int fd)
-{
-    return (int)syscall1(SYS_close, fd);
-}
-
-long lseek(int fd, long offset, int whence)
-{
-    return syscall3(SYS_lseek, fd, offset, whence);
-}
-
-int mprotect(void *addr, size_t len, int prot)
-{
-    return (int)syscall3(SYS_mprotect, (long)addr, (long)len, prot);
-}
-
-int chdir(const char *path)
-{
-    long result = syscall1(SYS_chdir, (long)path);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return 0;
-}
-
-char *getcwd(char *buf, size_t len)
-{
-    int allocated = 0;
-    long ret;
-
-    /* BusyBox Ash and other portable user programs use the widely supported
-     * getcwd(NULL, 0) allocation extension. LeonOS paths have a fixed ABI
-     * maximum, so allocate a buffer large enough for every canonical path. */
-    if (!buf) {
-        if (len != 0) {
-            errno = EINVAL;
-            return 0;
-        }
-        len = LEONOS_FS_PATH_LEN;
-        buf = malloc(len);
-        if (!buf) {
-            errno = ENOMEM;
-            return 0;
-        }
-        allocated = 1;
-    } else if (len == 0) {
-        errno = EINVAL;
-        return 0;
-    }
-
-    ret = syscall2(SYS_getcwd, (long)buf, (long)len);
-    if (ret < 0) {
-        errno = (int)-ret;
-        if (allocated) {
-            free(buf);
-        }
-        return 0;
-    }
-    return (char *)ret;
-}
-
-int ioctl(int fd, unsigned long request, void *arg)
-{
-    /* The fd 3 control-descriptor mechanism is gone. Every ioctl now targets
-     * the descriptor returned by open(). */
-    return (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
-}
 
 int sleep_ms(unsigned long ms)
 {
-    return (int)syscall2(SYS_nanosleep, (long)ms, 0);
+    struct timespec request = {.tv_sec = ms / 1000, .tv_nsec = (ms % 1000) * 1000000};
+    return (int)syscall2(SYS_nanosleep, (long)&request, 0);
 }
 
 int leonos_stat_legacy(const char *path, struct leonos_stat *st)
 {
-    return (int)syscall2(SYS_stat, (long)path, (long)st);
+    struct stat status;
+    if (!st) return -EFAULT;
+    if (stat(path, &status) < 0) return -errno;
+    st->type = S_ISDIR(status.st_mode) ? LEONOS_FS_TYPE_DIR :
+        (S_ISREG(status.st_mode) ? LEONOS_FS_TYPE_FILE : LEONOS_FS_TYPE_DEVICE);
+    st->reserved = 0;
+    st->size = status.st_size;
+    return 0;
 }
 
 int leonos_fstat_legacy(int fd, struct leonos_stat *st)
 {
-    return (int)syscall2(SYS_fstat, fd, (long)st);
-}
-
-int mkdir(const char *path, unsigned int mode)
-{
-    long result = syscall2(SYS_mkdir, (long)path, mode);
-    /* The native syscall ABI returns negative errno values, while the POSIX
-     * mkdir contract is -1 with errno set.  Returning the raw value makes
-     * callers such as BusyBox print only their generic message (errno remains
-     * stale), hiding whether the parent is missing, the filesystem is full,
-     * or the operation hit an I/O/read-only failure. */
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
+    struct stat status;
+    if (!st) return -EFAULT;
+    if (fstat(fd, &status) < 0) return -errno;
+    st->type = S_ISDIR(status.st_mode) ? LEONOS_FS_TYPE_DIR :
+        (S_ISREG(status.st_mode) ? LEONOS_FS_TYPE_FILE : LEONOS_FS_TYPE_DEVICE);
+    st->reserved = 0;
+    st->size = status.st_size;
     return 0;
 }
 
-int unlink(const char *path)
-{
-    return (int)syscall1(SYS_unlink, (long)path);
-}
 
-int rmdir(const char *path)
-{
-    return (int)syscall1(SYS_rmdir, (long)path);
-}
 
-int rename(const char *old_path, const char *new_path)
-{
-    return (int)syscall2(SYS_rename, (long)old_path, (long)new_path);
-}
-
-void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offset)
-{
-    long ret = syscall6(SYS_mmap, (long)addr, (long)len, prot, flags, fd, offset);
-    return ret < 0 ? LEONOS_MAP_FAILED : (void *)ret;
-}
-
-int munmap(void *addr, size_t len)
-{
-    return (int)syscall2(SYS_munmap, (long)addr, (long)len);
-}
-
-#define SBRK_PAGE_SIZE 4096U
-#define SBRK_MIN_RESERVE (64U * 1024U)
-
-static uint8_t *sbrk_break;
-static uint8_t *sbrk_mapped_end;
-
-static int sbrk_reserve(size_t minimum)
-{
-    size_t length = minimum < SBRK_MIN_RESERVE ? SBRK_MIN_RESERVE : minimum;
-    uint32_t flags = LEONOS_MAP_PRIVATE | LEONOS_MAP_ANONYMOUS;
-    void *base;
-
-    if (length > (size_t)-1 - (SBRK_PAGE_SIZE - 1U)) {
-        return 0;
-    }
-    length = (length + SBRK_PAGE_SIZE - 1U) & ~(size_t)(SBRK_PAGE_SIZE - 1U);
-    if (sbrk_mapped_end) {
-        flags |= LEONOS_MAP_FIXED;
-    }
-    base = mmap(sbrk_mapped_end, length, LEONOS_PROT_READ | LEONOS_PROT_WRITE,
-                flags, -1, 0);
-    if (base == LEONOS_MAP_FAILED ||
-        (sbrk_mapped_end && base != (void *)sbrk_mapped_end)) {
-        if (base != LEONOS_MAP_FAILED) {
-            (void)munmap(base, length);
-        }
-        return 0;
-    }
-    if ((uintptr_t)base > (uintptr_t)-1 - length) {
-        (void)munmap(base, length);
-        return 0;
-    }
-    if (!sbrk_break) {
-        sbrk_break = (uint8_t *)base;
-    }
-    sbrk_mapped_end = (uint8_t *)base + length;
-    return 1;
-}
-
-void *sbrk(ptrdiff_t increment)
-{
-    uint8_t *previous;
-    size_t amount;
-    uintptr_t target;
-
-    if (increment == 0) {
-        return sbrk_break;
-    }
-    if (increment < 0) {
-        amount = (size_t)(-(increment + 1)) + 1U;
-        if (!sbrk_break || amount > (size_t)(uintptr_t)sbrk_break) {
-            return (void *)-1;
-        }
-        previous = sbrk_break;
-        sbrk_break -= amount;
-        return previous;
-    }
-    amount = (size_t)increment;
-    if ((ptrdiff_t)amount != increment) {
-        return (void *)-1;
-    }
-    if (!sbrk_break && !sbrk_reserve(amount)) {
-        return (void *)-1;
-    }
-    previous = sbrk_break;
-    if ((uintptr_t)previous > (uintptr_t)-1 - amount) {
-        return (void *)-1;
-    }
-    target = (uintptr_t)previous + amount;
-    if (target > (uintptr_t)sbrk_mapped_end &&
-        !sbrk_reserve((size_t)(target - (uintptr_t)sbrk_mapped_end))) {
-        return (void *)-1;
-    }
-    sbrk_break = (uint8_t *)target;
-    return previous;
-}
-
-#ifndef LEONOS_USE_PICOLIBC
-void exit(int code)
-{
-    _exit(code);
-}
-
-static size_t malloc_align_up(size_t value)
-{
-    return (value + MALLOC_ALIGN - 1) & ~(MALLOC_ALIGN - 1);
-}
-
-static size_t page_align_up(size_t value)
-{
-    return (value + HEAP_PAGE_SIZE - 1) & ~(HEAP_PAGE_SIZE - 1);
-}
-
-static uint8_t *block_payload(struct heap_block *block)
-{
-    return (uint8_t *)(block + 1);
-}
-
-static int blocks_adjacent(struct heap_block *left, struct heap_block *right)
-{
-    return left && right &&
-           block_payload(left) + left->size == (uint8_t *)right;
-}
-
-static int block_is_page_aligned(struct heap_block *block)
-{
-    return (((uint64_t)(uintptr_t)block) & (HEAP_PAGE_SIZE - 1UL)) == 0;
-}
-
-static void heap_insert_sorted(struct heap_block *block)
-{
-    struct heap_block *cur = heap_blocks;
-    struct heap_block *prev = 0;
-    while (cur && cur < block) {
-        prev = cur;
-        cur = cur->next;
-    }
-    block->prev = prev;
-    block->next = cur;
-    if (prev) {
-        prev->next = block;
-    } else {
-        heap_blocks = block;
-    }
-    if (cur) {
-        cur->prev = block;
-    }
-}
-
-static void split_block(struct heap_block *block, size_t size)
-{
-    if (!block || block->size < size + sizeof(struct heap_block) + HEAP_MIN_SPLIT) {
-        return;
-    }
-    struct heap_block *rest =
-        (struct heap_block *)(void *)(block_payload(block) + size);
-    rest->magic = HEAP_BLOCK_MAGIC;
-    rest->size = block->size - size - sizeof(struct heap_block);
-    rest->flags = HEAP_BLOCK_FREE;
-    rest->reserved = 0;
-    rest->reserved2 = 0;
-    rest->prev = block;
-    rest->next = block->next;
-    if (rest->next) {
-        rest->next->prev = rest;
-    }
-    block->next = rest;
-    block->size = size;
-}
-
-static struct heap_block *coalesce_block(struct heap_block *block)
-{
-    if (!block) {
-        return 0;
-    }
-    for (;;) {
-        if (block->prev && (block->prev->flags & HEAP_BLOCK_FREE) &&
-            blocks_adjacent(block->prev, block)) {
-            struct heap_block *prev = block->prev;
-            prev->size += sizeof(struct heap_block) + block->size;
-            prev->next = block->next;
-            if (prev->next) {
-                prev->next->prev = prev;
-            }
-            block->magic = 0;
-            block = prev;
-            continue;
-        }
-        if (block->next && (block->next->flags & HEAP_BLOCK_FREE) &&
-            blocks_adjacent(block, block->next)) {
-            struct heap_block *next = block->next;
-            block->size += sizeof(struct heap_block) + next->size;
-            block->next = next->next;
-            if (block->next) {
-                block->next->prev = block;
-            }
-            next->magic = 0;
-            continue;
-        }
-        break;
-    }
-    return block;
-}
-
-static void heap_release_block(struct heap_block *block)
-{
-    if (!block || !(block->flags & HEAP_BLOCK_FREE) || !block_is_page_aligned(block)) {
-        return;
-    }
-    if (block->size > (size_t)-1 - sizeof(struct heap_block)) {
-        return;
-    }
-    size_t len = block->size + sizeof(struct heap_block);
-    if (len < HEAP_ARENA_SIZE || (len & (HEAP_PAGE_SIZE - 1UL)) != 0) {
-        return;
-    }
-
-    struct heap_block *prev = block->prev;
-    struct heap_block *next = block->next;
-    if (munmap(block, len) < 0) {
-        return;
-    }
-    if (prev) {
-        prev->next = next;
-    } else {
-        heap_blocks = next;
-    }
-    if (next) {
-        next->prev = prev;
-    }
-}
-
-static struct heap_block *heap_find_free(size_t size)
-{
-    for (struct heap_block *block = heap_blocks; block; block = block->next) {
-        if ((block->flags & HEAP_BLOCK_FREE) && block->size >= size) {
-            return block;
-        }
-    }
-    return 0;
-}
-
-static struct heap_block *heap_expand(size_t size)
-{
-    if (size > (size_t)-1 - sizeof(struct heap_block)) {
-        return 0;
-    }
-    size_t need = size + sizeof(struct heap_block);
-    size_t arena_len = need < HEAP_ARENA_SIZE ? HEAP_ARENA_SIZE : page_align_up(need);
-    if (arena_len < need) {
-        return 0;
-    }
-    void *base = mmap(0, arena_len,
-                      LEONOS_PROT_READ | LEONOS_PROT_WRITE,
-                      LEONOS_MAP_PRIVATE | LEONOS_MAP_ANONYMOUS,
-                      -1, 0);
-    if (base == LEONOS_MAP_FAILED) {
-        return 0;
-    }
-    struct heap_block *block = (struct heap_block *)base;
-    block->magic = HEAP_BLOCK_MAGIC;
-    block->size = arena_len - sizeof(struct heap_block);
-    block->flags = HEAP_BLOCK_FREE;
-    block->reserved = 0;
-    block->reserved2 = 0;
-    block->prev = 0;
-    block->next = 0;
-    heap_insert_sorted(block);
-    return coalesce_block(block);
-}
-
-void *malloc(size_t size)
-{
-    if (size == 0) {
-        size = 1;
-    }
-    size_t aligned = malloc_align_up(size);
-    if (aligned < size) {
-        return 0;
-    }
-    struct heap_block *block = heap_find_free(aligned);
-    if (!block) {
-        block = heap_expand(aligned);
-        if (!block) {
-            return 0;
-        }
-        block = heap_find_free(aligned);
-        if (!block) {
-            return 0;
-        }
-    }
-    split_block(block, aligned);
-    block->flags &= ~HEAP_BLOCK_FREE;
-    return block_payload(block);
-}
-
-void *calloc(size_t nmemb, size_t size)
-{
-    if (size && nmemb > (size_t)-1 / size) {
-        return 0;
-    }
-    size_t total = nmemb * size;
-    void *ptr = malloc(total);
-    if (ptr) {
-        memset(ptr, 0, total);
-    }
-    return ptr;
-}
-
-void *realloc(void *ptr, size_t size)
-{
-    if (!ptr) {
-        return malloc(size);
-    }
-    if (size == 0) {
-        free(ptr);
-        return 0;
-    }
-
-    struct heap_block *block = ((struct heap_block *)ptr) - 1;
-    if (block->magic != HEAP_BLOCK_MAGIC || (block->flags & HEAP_BLOCK_FREE)) {
-        return 0;
-    }
-
-    size_t aligned = malloc_align_up(size);
-    if (aligned < size) {
-        return 0;
-    }
-    if (block->size >= aligned) {
-        split_block(block, aligned);
-        return ptr;
-    }
-    if (block->next && (block->next->flags & HEAP_BLOCK_FREE) &&
-        blocks_adjacent(block, block->next) &&
-        block->size + sizeof(struct heap_block) + block->next->size >= aligned) {
-        struct heap_block *next = block->next;
-        block->size += sizeof(struct heap_block) + next->size;
-        block->next = next->next;
-        if (block->next) {
-            block->next->prev = block;
-        }
-        next->magic = 0;
-        split_block(block, aligned);
-        block->flags &= ~HEAP_BLOCK_FREE;
-        return ptr;
-    }
-
-    void *new_ptr = malloc(size);
-    if (!new_ptr) {
-        return 0;
-    }
-    memcpy(new_ptr, ptr, block->size < size ? block->size : size);
-    free(ptr);
-    return new_ptr;
-}
-
-void free(void *ptr)
-{
-    if (!ptr) {
-        return;
-    }
-    struct heap_block *block = ((struct heap_block *)ptr) - 1;
-    if (block->magic != HEAP_BLOCK_MAGIC || (block->flags & HEAP_BLOCK_FREE)) {
-        return;
-    }
-    block->flags |= HEAP_BLOCK_FREE;
-    heap_release_block(coalesce_block(block));
-}
-
-int puts(const char *s)
-{
-    size_t len = strlen(s);
-    write(1, s, len);
-    write(1, "\n", 1);
-    return (int)len + 1;
-}
-
-static void print_num(char *buf, size_t *pos, unsigned long value, unsigned base)
-{
-    char tmp[32];
-    const char *digits = "0123456789abcdef";
-    size_t i = 0;
-    if (value == 0) {
-        buf[(*pos)++] = '0';
-        return;
-    }
-    while (value) {
-        tmp[i++] = digits[value % base];
-        value /= base;
-    }
-    while (i) {
-        buf[(*pos)++] = tmp[--i];
-    }
-}
-
-static size_t format_text(char *buf, size_t cap, const char *fmt, va_list ap);
-
-int printf(const char *fmt, ...)
-{
-    char buffer[1024];
-    va_list args;
-    size_t length;
-    va_start(args, fmt);
-    length = format_text(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    write(1, buffer, length);
-    return (int)length;
-}
-
-static size_t format_text(char *buf, size_t cap, const char *fmt, va_list ap)
-{
-    size_t pos = 0;
-    for (const char *p = fmt; p && *p && pos + 1 < cap; ++p) {
-        if (*p != '%') {
-            buf[pos++] = *p;
-            continue;
-        }
-        ++p;
-        int zero_pad = 0;
-        int width = 0;
-        int precision = -1;
-        if (*p == '0') {
-            zero_pad = 1;
-            ++p;
-        }
-        while (*p >= '0' && *p <= '9') {
-            width = width * 10 + (*p - '0');
-            ++p;
-        }
-        if (*p == '.') {
-            precision = 0;
-            ++p;
-            while (*p >= '0' && *p <= '9') {
-                precision = precision * 10 + (*p - '0');
-                ++p;
-            }
-        }
-        int long_value = 0;
-        if (*p == 'l') {
-            long_value = 1;
-            ++p;
-        }
-        switch (*p) {
-        case 's': {
-            const char *text = va_arg(ap, const char *);
-            while (text && *text && pos + 1 < cap) {
-                buf[pos++] = *text++;
-            }
-            break;
-        }
-        case 'm': {
-            /* GNU/POSIX shells use %m to format the current errno without
-             * consuming an argument.  Keep it available to BusyBox and
-             * other portable applications using the shared formatter. */
-            const char *text = strerror(errno);
-            if (!text) {
-                text = "Unknown error";
-            }
-            while (text && *text && pos + 1 < cap) {
-                buf[pos++] = *text++;
-            }
-            break;
-        }
-        case 'd':
-        case 'i': {
-            long value = long_value ? va_arg(ap, long) : (long)va_arg(ap, int);
-            size_t digits_start = pos;
-            if (value < 0 && pos + 1 < cap) {
-                buf[pos++] = '-';
-                digits_start = pos;
-                value = -value;
-            }
-            print_num(buf, &pos, (unsigned long)value, 10);
-            while (zero_pad && width > (int)(pos - digits_start) && pos + 1 < cap) {
-                for (size_t i = pos; i > digits_start; --i) {
-                    buf[i] = buf[i - 1];
-                }
-                buf[digits_start] = '0';
-                ++pos;
-            }
-            while (precision > (int)(pos - digits_start) && pos + 1 < cap) {
-                for (size_t i = pos; i > digits_start; --i) {
-                    buf[i] = buf[i - 1];
-                }
-                buf[digits_start] = '0';
-                ++pos;
-            }
-            break;
-        }
-        case 'u': {
-            size_t start = pos;
-            print_num(buf, &pos, long_value ? (unsigned long)va_arg(ap, unsigned long)
-                                             : (unsigned long)va_arg(ap, unsigned int), 10);
-            while (zero_pad && width > (int)(pos - start) && pos + 1 < cap) {
-                for (size_t i = pos; i > start; --i) {
-                    buf[i] = buf[i - 1];
-                }
-                buf[start] = '0';
-                ++pos;
-            }
-            while (precision > (int)(pos - start) && pos + 1 < cap) {
-                for (size_t i = pos; i > start; --i) {
-                    buf[i] = buf[i - 1];
-                }
-                buf[start] = '0';
-                ++pos;
-            }
-            break;
-        }
-        case 'x':
-        case 'X': {
-            size_t start = pos;
-            print_num(buf, &pos, long_value ? (unsigned long)va_arg(ap, unsigned long)
-                                             : (unsigned long)va_arg(ap, unsigned int), 16);
-            while (zero_pad && width > (int)(pos - start) && pos + 1 < cap) {
-                for (size_t i = pos; i > start; --i) {
-                    buf[i] = buf[i - 1];
-                }
-                buf[start] = '0';
-                ++pos;
-            }
-            while (precision > (int)(pos - start) && pos + 1 < cap) {
-                for (size_t i = pos; i > start; --i) {
-                    buf[i] = buf[i - 1];
-                }
-                buf[start] = '0';
-                ++pos;
-            }
-            break;
-        }
-        case 'f': {
-            (void)va_arg(ap, double);
-            if (precision != 0 && pos + 1 < cap) {
-                buf[pos++] = '0';
-                buf[pos++] = '.';
-                if (pos + 1 < cap) {
-                    buf[pos++] = '0';
-                }
-            } else if (pos + 1 < cap) {
-                buf[pos++] = '0';
-            }
-            break;
-        }
-        case 'p':
-            if (pos + 2 < cap) {
-                buf[pos++] = '0';
-                buf[pos++] = 'x';
-            }
-            print_num(buf, &pos, (unsigned long)(uintptr_t)va_arg(ap, void *), 16);
-            break;
-        case 'c':
-            if (pos + 1 < cap) {
-                buf[pos++] = (char)va_arg(ap, int);
-            }
-            break;
-        case '%':
-            buf[pos++] = '%';
-            break;
-        default:
-            if (pos + 2 < cap) {
-                buf[pos++] = '%';
-                buf[pos++] = *p;
-            }
-            break;
-        }
-    }
-    if (cap) {
-        buf[pos < cap ? pos : cap - 1] = 0;
-    }
-    return pos;
-}
-
-int vsnprintf(char *buffer, size_t capacity, const char *fmt, va_list args)
-{
-    va_list copy;
-    size_t length;
-    if (!buffer || capacity == 0) {
-        return 0;
-    }
-    va_copy(copy, args);
-    length = format_text(buffer, capacity, fmt, copy);
-    va_end(copy);
-    return (int)length;
-}
-
-int snprintf(char *buffer, size_t capacity, const char *fmt, ...)
-{
-    va_list args;
-    int result;
-    va_start(args, fmt);
-    result = vsnprintf(buffer, capacity, fmt, args);
-    va_end(args);
-    return result;
-}
-
-int vfprintf(FILE *stream, const char *fmt, va_list args)
-{
-    char buffer[1024];
-    va_list copy;
-    size_t len;
-    if (!stream) {
-        return -1;
-    }
-    va_copy(copy, args);
-    len = format_text(buffer, sizeof(buffer), fmt, copy);
-    va_end(copy);
-    return write(stream->fd, buffer, len) < 0 ? -1 : (int)len;
-}
-
-int fprintf(FILE *stream, const char *fmt, ...)
-{
-    va_list args;
-    int result;
-    va_start(args, fmt);
-    result = vfprintf(stream, fmt, args);
-    va_end(args);
-    return result;
-}
-
-int sscanf(const char *text, const char *format, ...)
-{
-    va_list args;
-    int converted = 0;
-    va_start(args, format);
-    while (text && format && *format) {
-        if (*format != '%') {
-            if (*format == ' ' || *format == '\t') {
-                while (*text == ' ' || *text == '\t') {
-                    ++text;
-                }
-            } else if (*text != *format) {
-                break;
-            } else {
-                ++text;
-            }
-            ++format;
-            continue;
-        }
-        ++format;
-        if (*format == 'd' || *format == 'i') {
-            int *out = va_arg(args, int *);
-            int sign = 1;
-            int value = 0;
-            while (*text == ' ' || *text == '\t') {
-                ++text;
-            }
-            if (*text == '-') {
-                sign = -1;
-                ++text;
-            }
-            while (*text >= '0' && *text <= '9') {
-                value = value * 10 + (*text++ - '0');
-            }
-            if (out) {
-                *out = value * sign;
-                ++converted;
-            }
-        } else if (*format == 'x' || *format == 'X') {
-            unsigned int *out = va_arg(args, unsigned int *);
-            unsigned int value = 0;
-            while (*text == ' ' || *text == '\t') {
-                ++text;
-            }
-            while ((*text >= '0' && *text <= '9') ||
-                   (*text >= 'a' && *text <= 'f') ||
-                   (*text >= 'A' && *text <= 'F')) {
-                unsigned int digit = *text >= '0' && *text <= '9'
-                                         ? (unsigned int)(*text - '0')
-                                         : (unsigned int)((*text | 32) - 'a' + 10);
-                value = value * 16U + digit;
-                ++text;
-            }
-            if (out) {
-                *out = value;
-                ++converted;
-            }
-        }
-        ++format;
-    }
-    va_end(args);
-    return converted;
-}
-
-int putchar(int ch)
-{
-    char value = (char)ch;
-    return write(1, &value, 1) == 1 ? ch : -1;
-}
-
-FILE *fopen(const char *path, const char *mode)
-{
-    struct leonos_file *file;
-    int flags = LEONOS_O_RDONLY;
-    if (!path || !mode) {
-        return 0;
-    }
-    if (mode[0] == 'w') {
-        flags = LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC;
-    } else if (mode[0] == 'a') {
-        flags = LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND;
-    } else if (mode[0] == 'r' && mode[1] == '+') {
-        flags = LEONOS_O_RDWR;
-    }
-    int fd = open(path, flags, 0);
-    if (fd < 0) {
-        errno = -fd;
-        return 0;
-    }
-    file = malloc(sizeof(*file));
-    if (!file) {
-        close(fd);
-        return 0;
-    }
-    struct leonos_stat info;
-    file->fd = fd;
-    file->position = 0;
-    file->length = leonos_stat_legacy(path, &info) == 0 ? (long)info.size : 0;
-    file->eof = 0;
-    file->writable = (flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY;
-    if (flags & LEONOS_O_APPEND) {
-        file->position = file->length;
-    }
-    return file;
-}
-
-size_t fread(void *buffer, size_t size, size_t count, FILE *stream)
-{
-    size_t bytes = size * count;
-    long got;
-    if (!stream || !buffer || !size) {
-        return 0;
-    }
-    got = read(stream->fd, buffer, bytes);
-    if (got < 0) {
-        return 0;
-    }
-    stream->position += got;
-    if ((size_t)got < bytes) {
-        stream->eof = 1;
-    }
-    return (size_t)got / size;
-}
-
-size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream)
-{
-    size_t bytes = size * count;
-    long wrote;
-    if (!stream || !buffer || !size || !stream->writable) {
-        return 0;
-    }
-    wrote = write(stream->fd, buffer, bytes);
-    if (wrote < 0) {
-        return 0;
-    }
-    stream->position += wrote;
-    return (size_t)wrote / size;
-}
-
-int fclose(FILE *stream)
-{
-    int result;
-    if (!stream || stream == stdin || stream == stdout || stream == stderr) {
-        return -1;
-    }
-    result = close(stream->fd);
-    free(stream);
-    return result;
-}
-
-int fseek(FILE *stream, long offset, int whence)
-{
-    long result;
-    if (!stream) {
-        return -1;
-    }
-    result = lseek(stream->fd, offset, whence);
-    if (result < 0) {
-        return -1;
-    }
-    stream->position = result;
-    stream->eof = 0;
-    return 0;
-}
-
-long ftell(FILE *stream)
-{
-    return stream ? stream->position : -1;
-}
-
-int feof(FILE *stream)
-{
-    return stream ? stream->eof : 1;
-}
-
-char *fgets(char *buffer, int size, FILE *stream)
-{
-    int pos = 0;
-    char ch;
-    if (!buffer || size <= 1 || !stream) {
-        return 0;
-    }
-    while (pos + 1 < size && fread(&ch, 1, 1, stream) == 1) {
-        buffer[pos++] = ch;
-        if (ch == '\n') {
-            break;
-        }
-    }
-    buffer[pos] = 0;
-    return pos ? buffer : 0;
-}
-
-int fflush(FILE *stream)
-{
-    (void)stream;
-    return 0;
-}
-
-int fileno(FILE *stream)
-{
-    return stream ? stream->fd : -1;
-}
-
-int remove(const char *path)
-{
-    return unlink(path);
-}
-
-#endif
-
-int system(const char *command)
-{
-    (void)command;
-    return -1;
-}
-
-int isatty(int fd)
-{
-    struct termios termios;
-    return tcgetattr(fd, &termios) == 0;
-}
 
 /* Keep one descriptor per process so per-frame drawing does not repeatedly
  * allocate and release a device fd.  The kernel still accepts the legacy
@@ -1414,62 +118,63 @@ int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
     return 0;
 }
 
-static void leonos_fs_acl_synthetic(const char *path,
-                                     struct leonos_fs_acl *acl)
+static uint32_t mode_to_legacy_permissions(uint32_t mode)
 {
-    if (!acl) return;
-    memset(acl, 0, sizeof(*acl));
-    acl->version = LEONOS_FS_ACL_VERSION;
-    acl->owner_uid = (uint32_t)getuid();
-    acl->flags = LEONOS_FS_ACL_FLAG_SYNTHETIC;
-    acl->ace_count = 2;
-    acl->aces[0] = (struct leonos_fs_acl_ace){
-        .principal = LEONOS_FS_ACL_PRINCIPAL_OWNER,
-        .permissions = LEONOS_FS_PERM_FULL,
-    };
-    acl->aces[1] = (struct leonos_fs_acl_ace){
-        .principal = LEONOS_FS_ACL_PRINCIPAL_EVERYONE,
-        .permissions = LEONOS_FS_PERM_READ,
-    };
-    (void)path;
+    return ((mode & 4u) >> 2) | (mode & 2u) | ((mode & 1u) << 2);
 }
 
 int leonos_fs_acl_get(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path || !acl) return -1;
-    leonos_fs_acl_synthetic(path, acl);
+    struct stat st;
+    if (!path || !acl) { errno = EINVAL; return -1; }
+    if (stat(path, &st) < 0) return -1;
+    memset(acl, 0, sizeof(*acl));
+    acl->version = LEONOS_FS_ACL_VERSION;
+    acl->owner_uid = st.st_uid;
+    acl->ace_count = 3;
+    const uint32_t principals[] = {LEONOS_FS_ACL_PRINCIPAL_OWNER,
+        LEONOS_FS_ACL_PRINCIPAL_GROUP, LEONOS_FS_ACL_PRINCIPAL_EVERYONE};
+    for (uint32_t i = 0; i < 3; ++i) {
+        acl->aces[i].principal = principals[i];
+        acl->aces[i].permissions = mode_to_legacy_permissions((st.st_mode >> (6 - 3 * i)) & 7u);
+    }
     return 0;
 }
 
 int leonos_fs_acl_set(const char *path, const struct leonos_fs_acl *acl)
 {
-    mode_t mode = 0600;
-    if (!path || !acl) return -1;
-    for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
-        if (acl->aces[i].principal == LEONOS_FS_ACL_PRINCIPAL_OWNER) {
-            mode = (mode & ~0700) |
-                   ((acl->aces[i].permissions & 7u) << 6);
-        } else if (acl->aces[i].principal == LEONOS_FS_ACL_PRINCIPAL_EVERYONE) {
-            mode = (mode & ~0007) | (acl->aces[i].permissions & 7u);
-        }
+    struct stat st;
+    if (!path || !acl || acl->version != LEONOS_FS_ACL_VERSION ||
+        acl->ace_count > LEONOS_FS_ACL_MAX_ACE) { errno = EINVAL; return -1; }
+    if (stat(path, &st) < 0) return -1;
+    mode_t mode = st.st_mode & 07000;
+    for (uint32_t i = 0; i < acl->ace_count; ++i) {
+        const struct leonos_fs_acl_ace *ace = &acl->aces[i];
+        unsigned shift;
+        if (ace->principal == LEONOS_FS_ACL_PRINCIPAL_OWNER) shift = 6;
+        else if (ace->principal == LEONOS_FS_ACL_PRINCIPAL_GROUP) shift = 3;
+        else if (ace->principal == LEONOS_FS_ACL_PRINCIPAL_EVERYONE) shift = 0;
+        else { if (ace->permissions) { errno = ENOTSUP; return -1; } continue; }
+        if (ace->flags || (ace->permissions & ~7u)) { errno = ENOTSUP; return -1; }
+        uint32_t bits = ((ace->permissions & LEONOS_FS_PERM_READ) << 2) |
+                        (ace->permissions & LEONOS_FS_PERM_WRITE) |
+                        ((ace->permissions & LEONOS_FS_PERM_EXEC) >> 2);
+        mode |= bits << shift;
     }
+    if (st.st_uid != acl->owner_uid && chown(path, acl->owner_uid, (gid_t)-1) < 0) return -1;
     return chmod(path, mode);
 }
 
 int leonos_fs_acl_take_ownership(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path) return -1;
     if (chown(path, getuid(), getgid()) < 0) return -1;
-    leonos_fs_acl_synthetic(path, acl);
-    return 0;
+    return leonos_fs_acl_get(path, acl);
 }
 
 int leonos_fs_acl_repair(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path) return -1;
     if (chmod(path, 0700) < 0) return -1;
-    leonos_fs_acl_synthetic(path, acl);
-    return 0;
+    return leonos_fs_acl_get(path, acl);
 }
 
 int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
@@ -2848,7 +1553,7 @@ int leonos_http_download(const char *url, const char *output_path,
         stream.progress = progress;
         stream.progress_context = context;
         stream.fd = open(temp_path, LEONOS_O_WRONLY | LEONOS_O_CREAT |
-                         LEONOS_O_TRUNC, 0);
+                         LEONOS_O_TRUNC, 0666);
         if (stream.fd < 0) {
             response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
             return -1;
@@ -2923,11 +1628,15 @@ static void libc_clear_secret(void *data, uint32_t len)
 
 int leonos_system_reboot(void)
 {
+    if (getuid() != 0) return leonos_auth_request_power(RB_AUTOBOOT);
+    sync();
     return reboot(RB_AUTOBOOT);
 }
 
 int leonos_system_shutdown(void)
 {
+    if (getuid() != 0) return leonos_auth_request_power(RB_POWER_OFF);
+    sync();
     return reboot(RB_POWER_OFF);
 }
 
@@ -2937,7 +1646,7 @@ int leonos_kernel_debug_get_state(uint32_t *flags)
     int fd;
     if (!flags) return -1;
     *flags = 0;
-    fd = open("/system/state/kernel-debug", LEONOS_O_RDONLY, 0);
+    fd = open(LEONOS_PATH_KERNELDEBUG_CONTROL, LEONOS_O_RDONLY, 0);
     if (fd < 0) return 0;
     {
         long got = read(fd, buffer, sizeof(buffer) - 1u);
@@ -2956,8 +1665,8 @@ int leonos_kernel_debug_get_state(uint32_t *flags)
 
 static int leonos_kernel_debug_write(const char *text)
 {
-    int fd = open("/system/state/kernel-debug",
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    int fd = open(LEONOS_PATH_KERNELDEBUG_CONTROL,
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     uint32_t len = 0;
     if (fd < 0) return fd;
     while (text && text[len]) ++len;
@@ -3043,7 +1752,7 @@ int leonos_i18n_set_language(int lang)
 {
     const char *text = lang == LEONOS_LANG_ZH ? "lang=zh\n" : "lang=en\n";
     int fd = open(LEONOS_LOCALE_CONFIG_PATH,
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     long wrote;
     if (fd < 0) {
         return fd;
@@ -3056,207 +1765,4 @@ int leonos_i18n_set_language(int lang)
     locale_lang = lang == LEONOS_LANG_ZH ? LEONOS_LANG_ZH : LEONOS_LANG_EN;
     locale_cached = 1;
     return 0;
-}
-
-static int leonos_pty_error(int result);
-
-int posix_openpt(int flags)
-{
-    return open("/dev/ptmx", flags, 0);
-}
-
-int grantpt(int fd)
-{
-    uint32_t number = 0;
-    return ioctl(fd, TIOCGPTN, &number);
-}
-
-int unlockpt(int fd)
-{
-    uint32_t lock = 0;
-    return ioctl(fd, TIOCSPTLCK, &lock);
-}
-
-char *ptsname(int fd)
-{
-    static char path[32];
-    uint32_t number = 0;
-    if (ioctl(fd, TIOCGPTN, &number) < 0) return NULL;
-    if (snprintf(path, sizeof(path), "/dev/pts/%u", number) < 0) return NULL;
-    return path;
-}
-
-int openpty(int *master, int *slave, char *name,
-            const struct termios *termios, const struct winsize *winsize)
-{
-    int mfd;
-    int sfd;
-    char *path;
-    if (!master || !slave) {
-        errno = EINVAL;
-        return -1;
-    }
-    mfd = posix_openpt(LEONOS_O_RDWR);
-    if (mfd < 0) return -1;
-    if (grantpt(mfd) < 0 || unlockpt(mfd) < 0 || !(path = ptsname(mfd))) {
-        close(mfd);
-        return -1;
-    }
-    sfd = open(path, LEONOS_O_RDWR, 0);
-    if (sfd < 0) {
-        close(mfd);
-        return -1;
-    }
-    if (termios) (void)tcsetattr(sfd, TCSANOW, termios);
-    if (winsize) (void)tcsetwinsize(sfd, winsize);
-    if (name) {
-        size_t i = 0;
-        while (path[i] && i + 1 < 32) { name[i] = path[i]; ++i; }
-        name[i] = 0;
-    }
-    *master = mfd;
-    *slave = sfd;
-    return 0;
-}
-
-pid_t forkpty(int *master, const char *name,
-              const struct termios *termios, const struct winsize *winsize)
-{
-    int mfd;
-    int sfd;
-    pid_t pid;
-    char path[32];
-    if (openpty(&mfd, &sfd, path, termios, winsize) < 0) return -1;
-    pid = fork();
-    if (pid == 0) {
-        (void)setsid();
-        (void)dup2(sfd, 0);
-        (void)dup2(sfd, 1);
-        (void)dup2(sfd, 2);
-        close(mfd);
-        close(sfd);
-        return 0;
-    }
-    close(sfd);
-    if (master) *master = mfd;
-    else close(mfd);
-    (void)name;
-    return pid;
-}
-
-struct leonos_linux_winsize {
-    uint16_t ws_row;
-    uint16_t ws_col;
-    uint16_t ws_xpixel;
-    uint16_t ws_ypixel;
-};
-
-static int leonos_pty_error(int result)
-{
-    if (result < 0) {
-        errno = -result;
-        return -1;
-    }
-    return 0;
-}
-
-int tcgetattr(int fd, struct termios *termios)
-{
-    struct leonos_pty_termios native;
-    int result;
-    if (fd < 0 || !termios) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = ioctl(fd, TCGETS, &native);
-    if (result < 0) {
-        return leonos_pty_error(result);
-    }
-    termios->c_iflag = native.c_iflag;
-    termios->c_oflag = native.c_oflag;
-    termios->c_cflag = native.c_cflag;
-    termios->c_lflag = native.c_lflag;
-    for (uint32_t index = 0; index < LEONOS_PTY_NCCS; ++index) {
-        termios->c_cc[index] = native.c_cc[index];
-    }
-    termios->c_ispeed = native.c_ispeed;
-    termios->c_ospeed = native.c_ospeed;
-    return 0;
-}
-
-int tcsetattr(int fd, int action, const struct termios *termios)
-{
-    struct leonos_pty_termios_request request;
-    int result;
-    if (fd < 0 || !termios) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (action != TCSANOW && action != TCSADRAIN && action != TCSAFLUSH) {
-        errno = EINVAL;
-        return -1;
-    }
-    request.action = (uint32_t)action;
-    request.reserved = 0;
-    request.termios.c_iflag = termios->c_iflag;
-    request.termios.c_oflag = termios->c_oflag;
-    request.termios.c_cflag = termios->c_cflag;
-    request.termios.c_lflag = termios->c_lflag;
-    for (uint32_t index = 0; index < LEONOS_PTY_NCCS; ++index) {
-        request.termios.c_cc[index] = termios->c_cc[index];
-    }
-    request.termios.reserved = 0;
-    request.termios.c_ispeed = termios->c_ispeed;
-    request.termios.c_ospeed = termios->c_ospeed;
-    result = ioctl(fd,
-                   action == TCSADRAIN ? TCSETSW :
-                   (action == TCSAFLUSH ? TCSETSF : TCSETS),
-                   &request.termios);
-    return leonos_pty_error(result);
-}
-
-int tcgetwinsize(int fd, struct winsize *winsize)
-{
-    struct leonos_linux_winsize native;
-    int result;
-    if (fd < 0 || !winsize) {
-        errno = EINVAL;
-        return -1;
-    }
-    native = (struct leonos_linux_winsize){0};
-    result = ioctl(fd, TIOCGWINSZ, &native);
-    if (result == 0) {
-        winsize->ws_row = native.ws_row;
-        winsize->ws_col = native.ws_col;
-    }
-    return leonos_pty_error(result);
-}
-
-int tcsetwinsize(int fd, const struct winsize *winsize)
-{
-    struct leonos_linux_winsize native;
-    int result;
-    if (fd < 0 || !winsize) {
-        errno = EINVAL;
-        return -1;
-    }
-    native = (struct leonos_linux_winsize){
-        .ws_row = winsize->ws_row,
-        .ws_col = winsize->ws_col,
-        .ws_xpixel = 0,
-        .ws_ypixel = 0,
-    };
-    result = ioctl(fd, TIOCSWINSZ, &native);
-    return leonos_pty_error(result);
-}
-
-int ftruncate(int fd, off_t length)
-{
-    long result;
-    if (length < 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = syscall2(77, fd, (long)length);
-    return leonos_pty_error((int)result);
 }

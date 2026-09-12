@@ -1,8 +1,11 @@
 # 公共库参考
 
-LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动态 PIE；
-`STATIC=1` 时使用 `lib/leonos.a` 和下列静态归档。头文件是唯一稳定入口；未列出的
-内部符号不属于应用 ABI。
+SDK 默认构建动态 PIE，使用 musl 的 `libc.so`、mimalloc 的
+`libmimalloc.so.3` 和 LeonOS 扩展 `libleonos.so.2`。`STATIC=1` 使用同一套
+ABI 的静态归档。标准 POSIX 函数由 musl 提供；扩展库保留 GUI、系统服务
+等接口。终端应用使用 ncurses 6.6 的宽字符接口，链接
+`-lncursesw -ltinfow`，或使用 `make USE_NCURSES=1`。
+内核未实现的 Linux 行为仍以 ABI 审计清单为准。
 
 ## 文件、配置和文本
 
@@ -53,19 +56,19 @@ LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动�
 
 ## 第三方库
 
-- `lib/libc.a`：Picolibc 运行时，和 SDK 头文件、链接脚本成套使用。
+- `lib/libc.a`：musl 运行时，使用 SDK 编译驱动链接。
 - `lib/libz.a`、`lib/libpng.a`：压缩和 PNG；应用仍需设置输入大小上限。
 - `lib/libstardustui.a`：启用 `USE_STARDUSTUI=1` 时链接，且只能使用 SDK
   中随附的上游公共头文件。
 - `lib/libmagic.so.1` 与 `lib/libmagic.a`：file 5.48 的文件类型识别库；公共头
-  文件为 `include/magic.h`，运行时数据库为 `/system/share/misc/magic.mgc`。
+  文件为 `include/magic.h`，运行时数据库为 `/usr/share/misc/magic.mgc`。
 - `lib/liblua.so.5` 与 `lib/liblua.a`：Lua 5.4.8 C API；公共头文件为
   `include/lua5.4/`。动态 C 模块加载仍未开放。
 - `lib/sqlite.so.3` 与 `lib/sqlite.a`：SQLite 3.46.1 C API；公共头文件为
   `include/sqlite3.h`。LeonOS 使用自定义 VFS，当前关闭 WAL、扩展加载和跨进程锁。
 
-`libmagic.so.1` 和 `liblua.so.5` 与 `libleonos.so.1` 都要求 LeonOS ABI v1，
-运行时从 `/system/lib` 解析。它们不提供宿主机 ABI 兼容层。
+这些共享库已使用 musl ABI 构建，运行时从 `/usr/lib/leonos` 与 `/lib` 解析，
+通过 `/lib/ld-musl-x86_64.so.1` 加载。旧私有 ABI 库必须重新编译。
 
 在 SDK 默认动态构建中，使用 `USE_LIBMAGIC=1` 或 `USE_LUA=1` 会自动写入
 相应 `DT_NEEDED` 项。例如：

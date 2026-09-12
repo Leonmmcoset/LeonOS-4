@@ -17,19 +17,6 @@ sdk = false
 api = false
 
 [[components]]
-id = "authd"
-symbol = "APP_AUTHD"
-label = "Authentication daemon"
-category = "Core services"
-kind = "system-app"
-default = true
-required = true
-stage = true
-entry = false
-sdk = false
-api = false
-
-[[components]]
 id = "imd"
 symbol = "APP_IMD"
 label = "Input method daemon"
@@ -77,19 +64,6 @@ kind = "system-app"
 default = true
 required = true
 stage = false
-entry = false
-sdk = false
-api = false
-
-[[components]]
-id = "oobe"
-symbol = "APP_OOBE"
-label = "First-run setup"
-category = "System applications"
-kind = "system-app"
-default = true
-required = false
-stage = true
 entry = false
 sdk = false
 api = false
@@ -303,6 +277,46 @@ sdk = false
 api = false
 open_with = true
 extensions = [".api"]
+
+[[components]]
+id = "sudo"
+symbol = "APP_SUDO"
+label = "sudo"
+category = "System applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "su"
+symbol = "APP_SU"
+label = "su"
+category = "System applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+# Fixed worker and askpass UI launched through upstream sudo.
+id = "sudod"
+symbol = "APP_SUDOD"
+label = "Privileged file-operation worker"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
 
 [[components]]
 id = "hello"
@@ -601,6 +615,59 @@ required = false
 stage = true
 entry = true
 sdk = false
+api = false
+
+[[components]]
+id = "vim"
+symbol = "TOOL_VIM"
+label = "Vim"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+depends = ["ncurses"]
+
+[[components]]
+id = "musl-gcc"
+symbol = "TOOL_MUSL_GCC"
+label = "Static musl GCC and binutils"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "python"
+symbol = "TOOL_PYTHON"
+label = "Python 3 with complete standard library"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "ncurses"
+symbol = "LIB_NCURSES"
+label = "ncurses wide-character terminal library"
+category = "Libraries"
+kind = "library"
+default = true
+required = false
+stage = true
+entry = false
+sdk = true
 api = false
 
 [[components]]
