@@ -6,7 +6,7 @@
 此代码库是 **LeonOS 4** 项目的源代码仓库，此仓库的开源协议位于[LICENSE](LICENSE)。
 
 ## 感谢
-感谢 @VasilyZa 对 LeonOS 4 的 Linux ABI 和 musl libc 等等有着至高无上的贡献，他的贡献将会被永远记住。
+感谢 [@VasilyZa](https://github.com/VasilyZa/) 对 LeonOS 4 的 Linux ABI 和 musl libc 等等有着至高无上的贡献，他的贡献将会被永远记住。
 
 ## 编译源代码
 > 本项目只能在 Linux 和 WSL 平台编译
